@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "keylime-dashboard",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["next", "dev", "-p", "3456"],
+      "port": 3456
+    }
+  ]
+}
