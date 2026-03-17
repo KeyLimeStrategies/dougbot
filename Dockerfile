@@ -22,7 +22,7 @@ RUN apk add --no-cache python3 make g++
 
 ENV NODE_ENV=production
 ENV PORT=3000
-ENV DB_DIR=/app/data
+ENV DB_DIR=/data
 
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nextjs
@@ -32,8 +32,8 @@ COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/public ./public
 
-# Create data directory for SQLite (will be mounted as volume)
-RUN mkdir -p /app/data && chown nextjs:nodejs /app/data
+# Create data directory for SQLite (Railway volume mounts here)
+RUN mkdir -p /data && chown nextjs:nodejs /data
 
 USER nextjs
 
