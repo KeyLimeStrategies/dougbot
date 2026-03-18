@@ -219,13 +219,15 @@ export async function POST(request: NextRequest) {
 
     const now = new Date();
     const currentTime = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: 'America/New_York' });
-    const isPartialDay = latestDate.d === now.toISOString().split('T')[0];
+    const etHour = parseInt(now.toLocaleString('en-US', { hour: 'numeric', hour12: false, timeZone: 'America/New_York' }));
+    const isToday = latestDate.d === now.toISOString().split('T')[0];
+    const isEarlyInDay = isToday && etHour < 18; // before 6pm ET
 
     const prompt = `You are a senior digital advertising analyst for Keylime Strategies, a Democratic political consulting firm managing Meta (Facebook/Instagram) ad campaigns for congressional candidates.
 
 Today's date: ${latestDate.d}, current time: ${currentTime} ET
-${isPartialDay ? `IMPORTANT: Today (${latestDate.d}) is only partway through the day. Today's numbers are INCOMPLETE and should NOT be used to evaluate performance. Focus your analysis on completed days (yesterday and prior) for reliable conclusions. You can mention today's partial numbers as directional but clearly note they are incomplete.` : ''}
-Portfolio overview for ${isPartialDay ? 'today (partial)' : 'latest day'}: $${totalSpend.toFixed(0)} spent, $${totalRev.toFixed(0)} revenue, $${totalProfit.toFixed(0)} profit
+${isEarlyInDay ? `NOTE: It is still early in the day. Today's (${latestDate.d}) numbers are INCOMPLETE. Do not draw conclusions from today's partial data. Focus your analysis on completed days (yesterday and prior) for reliable evaluation. You can reference today's numbers as directional context only.` : ''}
+Portfolio overview for ${isEarlyInDay ? 'today (partial)' : 'latest day'}: $${totalSpend.toFixed(0)} spent, $${totalRev.toFixed(0)} revenue, $${totalProfit.toFixed(0)} profit
 Portfolio avg CPP (72h): $${avgCpp.toFixed(2)}
 
 BUSINESS RULES:
