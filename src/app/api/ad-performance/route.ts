@@ -95,8 +95,9 @@ export async function GET(request: NextRequest) {
       const ageHours = ageMs / (1000 * 60 * 60);
       const isNewAd = ageHours < 72;
 
-      // Check if ad is already inactive in Meta
-      const isInactive = ad.ad_delivery && ad.ad_delivery.toLowerCase() !== 'active';
+      // Check if ad is inactive: either Meta marks it inactive, or no spend in last 7 days
+      const isInactive = (ad.ad_delivery && ad.ad_delivery.toLowerCase() !== 'active')
+        || (adExt.spend_24h === 0 && ad.spend_3d === 0 && adExt.last_seen < new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]);
 
       // ROI calculation
       const hasActBlueData = actblueRevenue > 0;
@@ -179,8 +180,9 @@ export async function GET(request: NextRequest) {
         trend,
         recommendation,
         kill_reason,
+        _inactive: isInactive,
       };
-    });
+    }).filter(ad => !(ad as { _inactive: boolean })._inactive);
 
     // --- CAMPAIGN-LEVEL DATA (grouped by client + campaign_type) ---
     const spendRows = db.prepare(`
