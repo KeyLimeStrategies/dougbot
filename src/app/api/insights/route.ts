@@ -217,10 +217,15 @@ export async function POST(request: NextRequest) {
     const totalRev = todaySummaries.reduce((s, r) => s + r.total_revenue, 0);
     const totalProfit = todaySummaries.reduce((s, r) => s + r.profit, 0);
 
+    const now = new Date();
+    const currentTime = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: 'America/New_York' });
+    const isPartialDay = latestDate.d === now.toISOString().split('T')[0];
+
     const prompt = `You are a senior digital advertising analyst for Keylime Strategies, a Democratic political consulting firm managing Meta (Facebook/Instagram) ad campaigns for congressional candidates.
 
-Today's date: ${latestDate.d}
-Portfolio overview for today: $${totalSpend.toFixed(0)} spent, $${totalRev.toFixed(0)} revenue, $${totalProfit.toFixed(0)} profit
+Today's date: ${latestDate.d}, current time: ${currentTime} ET
+${isPartialDay ? `IMPORTANT: Today (${latestDate.d}) is only partway through the day. Today's numbers are INCOMPLETE and should NOT be used to evaluate performance. Focus your analysis on completed days (yesterday and prior) for reliable conclusions. You can mention today's partial numbers as directional but clearly note they are incomplete.` : ''}
+Portfolio overview for ${isPartialDay ? 'today (partial)' : 'latest day'}: $${totalSpend.toFixed(0)} spent, $${totalRev.toFixed(0)} revenue, $${totalProfit.toFixed(0)} profit
 Portfolio avg CPP (72h): $${avgCpp.toFixed(2)}
 
 BUSINESS RULES:
