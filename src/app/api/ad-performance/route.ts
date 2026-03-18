@@ -63,7 +63,7 @@ export async function GET(request: NextRequest) {
       FROM revenue r
       JOIN clients c ON c.id = r.client_id
       WHERE r.refcode IS NOT NULL AND r.refcode != '' AND c.active = 1
-        AND (r.fundraising_page LIKE '%fbig%' OR r.fundraising_page IS NULL OR r.fundraising_page = '') ${clientWhere}
+        AND r.fundraising_page LIKE '%fbig%' ${clientWhere}
       GROUP BY r.refcode
     `).all(...params) as { refcode: string; total_revenue: number; revenue_72h: number }[];
 

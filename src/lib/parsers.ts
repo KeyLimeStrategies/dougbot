@@ -370,7 +370,7 @@ function recalculateSummaries() {
   const revenueData = db.prepare(`
     SELECT date, client_id, SUM(amount) as total_revenue
     FROM revenue
-    WHERE fundraising_page LIKE '%fbig%' OR fundraising_page IS NULL OR fundraising_page = ''
+    WHERE fundraising_page LIKE '%fbig%'
     GROUP BY date, client_id
   `).all() as { date: string; client_id: number; total_revenue: number }[];
 
