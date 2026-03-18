@@ -46,13 +46,15 @@ export async function GET(request: NextRequest) {
         SUM(CASE WHEN a.date >= date('now', '-3 days') THEN a.spend ELSE 0 END) as spend_3d,
         SUM(a.results) as total_results,
         SUM(CASE WHEN a.date >= date('now', '-3 days') THEN a.results ELSE 0 END) as results_3d,
-        MAX(a.frequency) as frequency
+        MAX(a.frequency) as frequency,
+        MIN(a.date) as first_seen,
+        MAX(a.date) as last_seen
       FROM ad_spend a
       JOIN clients c ON c.id = a.client_id
       WHERE c.active = 1 ${clientWhere}
       GROUP BY a.ad_name, c.name, c.short_code, c.fee_rate, a.campaign_type, a.batch, a.ad_delivery, a.attribution_setting
       ORDER BY total_spend DESC
-    `).all(...params) as (AdPerformance & { fee_rate: number })[];
+    `).all(...params) as (AdPerformance & { fee_rate: number; first_seen: string; last_seen: string })[];
 
     // Get ActBlue revenue per refcode (ad name) for KILL decisions
     const revenueRows = db.prepare(`
@@ -73,11 +75,21 @@ export async function GET(request: NextRequest) {
     }
 
     // Apply KILL logic at individual ad level (using ActBlue revenue as ground truth)
+    const now = new Date();
     const adResults: AdPerformance[] = ads.map(ad => {
+      const adWithDates = ad as AdPerformance & { fee_rate: number; first_seen: string; last_seen: string };
       const rev = revenueMap.get(ad.ad_name);
       const actblueRevenue = rev?.total_revenue ?? 0;
-      const feeRate = (ad as AdPerformance & { fee_rate: number }).fee_rate ?? 0.10;
+      const feeRate = adWithDates.fee_rate ?? 0.10;
       const spendWithFee = ad.total_spend + (ad.total_spend * feeRate);
+
+      // Calculate ad age in hours from first_seen
+      const firstSeen = new Date(adWithDates.first_seen + 'T00:00:00');
+      const adAgeHours = (now.getTime() - firstSeen.getTime()) / (1000 * 60 * 60);
+      const isNewAd = adAgeHours < 72; // Under 72h = learning phase
+
+      // Check if ad is already inactive in Meta
+      const isInactive = ad.ad_delivery && ad.ad_delivery.toLowerCase() !== 'active';
 
       // Use ActBlue revenue for ROI, fall back to Meta results count
       const hasActBlueData = actblueRevenue > 0;
@@ -88,25 +100,28 @@ export async function GET(request: NextRequest) {
       let recommendation: AdPerformance['recommendation'] = 'OK';
       let kill_reason: string | undefined;
 
-      // Zero results from both Meta AND ActBlue
-      if (ad.total_spend > 50 && ad.total_results === 0 && !hasActBlueData) {
-        recommendation = 'KILL';
-        kill_reason = `$${ad.total_spend.toFixed(0)} spent, 0 results (Meta + ActBlue)`;
-      }
-      // Has ActBlue data: use ROI as the real measure
-      else if (hasActBlueData && adRoi < 0.5 && ad.total_spend > 50) {
-        recommendation = 'KILL';
-        kill_reason = `ROI ${adRoi.toFixed(2)}x on $${ad.total_spend.toFixed(0)} spend`;
-      }
-      // No ActBlue data but Meta shows expensive conversions
-      else if (!hasActBlueData && ad.total_results >= 3 && cpp > 40) {
-        recommendation = 'KILL';
-        kill_reason = `CPP $${cpp.toFixed(2)} (Meta), no ActBlue revenue`;
-      }
-      // Frequency too high (audience exhaustion)
-      else if (ad.frequency > 2.0) {
-        recommendation = 'KILL';
-        kill_reason = `Frequency ${ad.frequency.toFixed(2)} (>2.0)`;
+      // Skip KILL logic for inactive ads (already off) and new ads (learning phase)
+      if (!isInactive && !isNewAd) {
+        // Zero results from both Meta AND ActBlue
+        if (ad.total_spend > 50 && ad.total_results === 0 && !hasActBlueData) {
+          recommendation = 'KILL';
+          kill_reason = `$${ad.total_spend.toFixed(0)} spent, 0 results (Meta + ActBlue)`;
+        }
+        // Has ActBlue data: use ROI as the real measure
+        else if (hasActBlueData && adRoi < 0.5 && ad.total_spend > 50) {
+          recommendation = 'KILL';
+          kill_reason = `ROI ${adRoi.toFixed(2)}x on $${ad.total_spend.toFixed(0)} spend`;
+        }
+        // No ActBlue data but Meta shows expensive conversions
+        else if (!hasActBlueData && ad.total_results >= 3 && cpp > 40) {
+          recommendation = 'KILL';
+          kill_reason = `CPP $${cpp.toFixed(2)} (Meta), no ActBlue revenue`;
+        }
+        // Frequency too high (audience exhaustion)
+        else if (ad.frequency > 2.0) {
+          recommendation = 'KILL';
+          kill_reason = `Frequency ${ad.frequency.toFixed(2)} (>2.0)`;
+        }
       }
 
       return {
