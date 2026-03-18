@@ -316,8 +316,9 @@ function CampaignCard({
                   <th className="text-right py-1 px-1">3d Spend</th>
                   <th className="text-right py-1 px-1">Results</th>
                   <th className="text-right py-1 px-1">CPP</th>
+                  <th className="text-right py-1 px-1">AB Rev</th>
                   <th className="text-right py-1 px-1">Freq</th>
-                  <th className="text-left py-1 px-1">Launched</th>
+                  <th className="text-left py-1 px-1">First Data</th>
                   <th className="text-left py-1 px-1">Status</th>
                 </tr>
               </thead>
@@ -333,6 +334,9 @@ function CampaignCard({
                     <td className="py-1 px-1 text-right text-gray-300">{ad.total_results}</td>
                     <td className={`py-1 px-1 text-right font-mono ${ad.cpp > 40 ? 'text-red-400' : ad.cpp < 25 && ad.cpp > 0 ? 'text-green-400' : 'text-gray-300'}`}>
                       {ad.cpp > 0 ? fmt(ad.cpp) : '-'}
+                    </td>
+                    <td className={`py-1 px-1 text-right font-mono ${ad.actblue_revenue > 0 ? 'text-green-400' : 'text-gray-600'}`}>
+                      {ad.actblue_revenue > 0 ? fmt(ad.actblue_revenue) : '$0'}
                     </td>
                     <td className={`py-1 px-1 text-right ${ad.frequency > 2.0 ? 'text-red-400' : 'text-gray-400'}`}>
                       {ad.frequency.toFixed(2)}

@@ -48,13 +48,14 @@ export async function GET(request: NextRequest) {
         SUM(CASE WHEN a.date >= date('now', '-3 days') THEN a.results ELSE 0 END) as results_3d,
         MAX(a.frequency) as frequency,
         MIN(a.date) as first_seen,
-        MAX(a.date) as last_seen
+        MAX(a.date) as last_seen,
+        COUNT(DISTINCT a.date) as days_with_data
       FROM ad_spend a
       JOIN clients c ON c.id = a.client_id
       WHERE c.active = 1 ${clientWhere}
       GROUP BY a.ad_name, c.name, c.short_code, c.fee_rate, a.campaign_type, a.batch, a.ad_delivery, a.attribution_setting
       ORDER BY total_spend DESC
-    `).all(...params) as (AdPerformance & { fee_rate: number; first_seen: string; last_seen: string })[];
+    `).all(...params) as (AdPerformance & { fee_rate: number; first_seen: string; last_seen: string; days_with_data: number })[];
 
     // Get ActBlue revenue per refcode (ad name) for KILL decisions
     const revenueRows = db.prepare(`
@@ -75,18 +76,16 @@ export async function GET(request: NextRequest) {
     }
 
     // Apply KILL logic at individual ad level (using ActBlue revenue as ground truth)
-    const now = new Date();
     const adResults: AdPerformance[] = ads.map(ad => {
-      const adWithDates = ad as AdPerformance & { fee_rate: number; first_seen: string; last_seen: string };
+      const adWithDates = ad as AdPerformance & { fee_rate: number; first_seen: string; last_seen: string; days_with_data: number };
       const rev = revenueMap.get(ad.ad_name);
       const actblueRevenue = rev?.total_revenue ?? 0;
       const feeRate = adWithDates.fee_rate ?? 0.10;
       const spendWithFee = ad.total_spend + (ad.total_spend * feeRate);
 
-      // Calculate ad age in hours from first_seen
-      const firstSeen = new Date(adWithDates.first_seen + 'T00:00:00');
-      const adAgeHours = (now.getTime() - firstSeen.getTime()) / (1000 * 60 * 60);
-      const isNewAd = adAgeHours < 72; // Under 72h = learning phase
+      // Ad is "new" if we have fewer than 3 days of data for it
+      // This is more reliable than launch date since first_seen only reflects when data was first uploaded
+      const isNewAd = adWithDates.days_with_data < 3;
 
       // Check if ad is already inactive in Meta
       const isInactive = ad.ad_delivery && ad.ad_delivery.toLowerCase() !== 'active';
