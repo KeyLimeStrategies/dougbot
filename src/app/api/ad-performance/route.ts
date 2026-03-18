@@ -49,52 +49,83 @@ export async function GET(request: NextRequest) {
         MAX(a.frequency) as frequency,
         MIN(a.date) as first_seen,
         MAX(a.date) as last_seen,
-        COUNT(DISTINCT a.date) as days_with_data
+        COUNT(DISTINCT a.date) as days_with_data,
+        SUM(CASE WHEN a.date >= date('now', '-1 days') THEN a.spend ELSE 0 END) as spend_24h,
+        SUM(CASE WHEN a.date >= date('now', '-2 days') AND a.date < date('now', '-1 days') THEN a.spend ELSE 0 END) as spend_prev_24h,
+        SUM(CASE WHEN a.date >= date('now', '-1 days') THEN a.results ELSE 0 END) as results_24h,
+        SUM(CASE WHEN a.date >= date('now', '-2 days') AND a.date < date('now', '-1 days') THEN a.results ELSE 0 END) as results_prev_24h
       FROM ad_spend a
       JOIN clients c ON c.id = a.client_id
       WHERE c.active = 1 ${clientWhere}
       GROUP BY a.ad_name, c.name, c.short_code, c.fee_rate, a.campaign_type, a.batch, a.ad_delivery, a.attribution_setting
       ORDER BY total_spend DESC
-    `).all(...params) as (AdPerformance & { fee_rate: number; first_seen: string; last_seen: string; days_with_data: number })[];
+    `).all(...params) as (AdPerformance & { fee_rate: number; first_seen: string; last_seen: string; days_with_data: number; spend_24h: number; spend_prev_24h: number; results_24h: number; results_prev_24h: number })[];
 
     // Get ActBlue revenue per refcode (ad name) for KILL decisions
     const revenueRows = db.prepare(`
       SELECT
         r.refcode,
         SUM(r.amount) as total_revenue,
-        SUM(CASE WHEN r.date >= date('now', '-3 days') THEN r.amount ELSE 0 END) as revenue_72h
+        SUM(CASE WHEN r.date >= date('now', '-3 days') THEN r.amount ELSE 0 END) as revenue_72h,
+        SUM(CASE WHEN r.date >= date('now', '-1 days') THEN r.amount ELSE 0 END) as revenue_24h,
+        SUM(CASE WHEN r.date >= date('now', '-2 days') AND r.date < date('now', '-1 days') THEN r.amount ELSE 0 END) as revenue_prev_24h
       FROM revenue r
       JOIN clients c ON c.id = r.client_id
       WHERE r.refcode IS NOT NULL AND r.refcode != '' AND c.active = 1
         AND r.fundraising_page LIKE '%fbig%' ${clientWhere}
       GROUP BY r.refcode
-    `).all(...params) as { refcode: string; total_revenue: number; revenue_72h: number }[];
+    `).all(...params) as { refcode: string; total_revenue: number; revenue_72h: number; revenue_24h: number; revenue_prev_24h: number }[];
 
-    const revenueMap = new Map<string, { total_revenue: number; revenue_72h: number }>();
+    const revenueMap = new Map<string, { total_revenue: number; revenue_72h: number; revenue_24h: number; revenue_prev_24h: number }>();
     for (const r of revenueRows) {
-      revenueMap.set(r.refcode, { total_revenue: r.total_revenue, revenue_72h: r.revenue_72h });
+      revenueMap.set(r.refcode, { total_revenue: r.total_revenue, revenue_72h: r.revenue_72h, revenue_24h: r.revenue_24h, revenue_prev_24h: r.revenue_prev_24h });
     }
 
     // Apply KILL logic at individual ad level (using ActBlue revenue as ground truth)
     const adResults: AdPerformance[] = ads.map(ad => {
-      const adWithDates = ad as AdPerformance & { fee_rate: number; first_seen: string; last_seen: string; days_with_data: number };
+      const adExt = ad as AdPerformance & { fee_rate: number; first_seen: string; last_seen: string; days_with_data: number; spend_24h: number; spend_prev_24h: number; results_24h: number; results_prev_24h: number };
       const rev = revenueMap.get(ad.ad_name);
       const actblueRevenue = rev?.total_revenue ?? 0;
-      const feeRate = adWithDates.fee_rate ?? 0.10;
+      const feeRate = adExt.fee_rate ?? 0.10;
       const spendWithFee = ad.total_spend + (ad.total_spend * feeRate);
 
       // Ad is "new" if we have fewer than 3 days of data for it
-      // This is more reliable than launch date since first_seen only reflects when data was first uploaded
-      const isNewAd = adWithDates.days_with_data < 3;
+      const isNewAd = adExt.days_with_data < 3;
 
       // Check if ad is already inactive in Meta
       const isInactive = ad.ad_delivery && ad.ad_delivery.toLowerCase() !== 'active';
 
-      // Use ActBlue revenue for ROI, fall back to Meta results count
+      // ROI calculation
       const hasActBlueData = actblueRevenue > 0;
       const adRoi = spendWithFee > 0 ? actblueRevenue / spendWithFee : 0;
       const cpp = ad.total_results > 0 ? ad.total_spend / ad.total_results : Infinity;
       const cpp3d = ad.results_3d > 0 ? ad.spend_3d / ad.results_3d : Infinity;
+
+      // 24h trend: compare last 24h ROI vs previous 24h ROI
+      // Use CPP as a proxy when revenue data is sparse
+      const rev24h = rev?.revenue_24h ?? 0;
+      const revPrev24h = rev?.revenue_prev_24h ?? 0;
+      const spend24hWithFee = adExt.spend_24h + (adExt.spend_24h * feeRate);
+      const spendPrev24hWithFee = adExt.spend_prev_24h + (adExt.spend_prev_24h * feeRate);
+      const roi24h = spend24hWithFee > 0 ? rev24h / spend24hWithFee : 0;
+      const roiPrev24h = spendPrev24hWithFee > 0 ? revPrev24h / spendPrev24hWithFee : 0;
+
+      let trend: AdPerformance['trend'] = 'flat';
+      if (isNewAd) {
+        trend = 'new';
+      } else if (adExt.spend_24h > 0 && adExt.spend_prev_24h > 0) {
+        // Compare using ROI if we have revenue, otherwise use CPP
+        if (rev24h > 0 || revPrev24h > 0) {
+          if (roi24h > roiPrev24h * 1.1) trend = 'up';
+          else if (roi24h < roiPrev24h * 0.9) trend = 'down';
+        } else {
+          // No revenue: compare results per dollar
+          const eff24h = adExt.spend_24h > 0 ? adExt.results_24h / adExt.spend_24h : 0;
+          const effPrev = adExt.spend_prev_24h > 0 ? adExt.results_prev_24h / adExt.spend_prev_24h : 0;
+          if (eff24h > effPrev * 1.1) trend = 'up';
+          else if (eff24h < effPrev * 0.9) trend = 'down';
+        }
+      }
 
       let recommendation: AdPerformance['recommendation'] = 'OK';
       let kill_reason: string | undefined;
@@ -139,8 +170,10 @@ export async function GET(request: NextRequest) {
         cpp_3d: cpp3d === Infinity ? 0 : cpp3d,
         frequency: ad.frequency,
         actblue_revenue: actblueRevenue,
-        first_seen: adWithDates.first_seen,
+        roi: adRoi,
+        first_seen: adExt.first_seen,
         is_new: isNewAd,
+        trend,
         recommendation,
         kill_reason,
       };

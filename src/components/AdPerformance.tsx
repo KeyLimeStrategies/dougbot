@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { AlertTriangle, TrendingUp, TrendingDown, Minus, ChevronDown, ChevronRight } from 'lucide-react';
+import { AlertTriangle, TrendingUp, TrendingDown, Minus, ChevronDown, ChevronRight, ArrowUp, ArrowDown } from 'lucide-react';
 import type { AdPerformance as AdPerf, CampaignPerformance } from '@/lib/types';
 
 interface Summary {
@@ -311,14 +311,14 @@ function CampaignCard({
               <thead>
                 <tr className="text-gray-600 uppercase">
                   <th className="text-left py-1 px-1">Ad</th>
-                  <th className="text-left py-1 px-1">Type</th>
                   <th className="text-right py-1 px-1">Spend</th>
-                  <th className="text-right py-1 px-1">3d Spend</th>
+                  <th className="text-right py-1 px-1">AB Rev</th>
+                  <th className="text-right py-1 px-1">ROI</th>
                   <th className="text-right py-1 px-1">Results</th>
                   <th className="text-right py-1 px-1">CPP</th>
-                  <th className="text-right py-1 px-1">AB Rev</th>
                   <th className="text-right py-1 px-1">Freq</th>
-                  <th className="text-left py-1 px-1">First Data</th>
+                  <th className="text-center py-1 px-1">24h</th>
+                  <th className="text-left py-1 px-1">Launched</th>
                   <th className="text-left py-1 px-1">Status</th>
                 </tr>
               </thead>
@@ -328,26 +328,32 @@ function CampaignCard({
                     <td className="py-1 px-1 text-gray-300 font-mono">
                       {ad.ad_name}
                     </td>
-                    <td className="py-1 px-1 text-gray-500">{ad.campaign_type}</td>
                     <td className="py-1 px-1 text-right text-gray-300">{fmt(ad.total_spend)}</td>
-                    <td className="py-1 px-1 text-right text-gray-400">{fmt(ad.spend_3d)}</td>
+                    <td className={`py-1 px-1 text-right font-mono ${ad.actblue_revenue > 0 ? 'text-green-400' : 'text-gray-600'}`}>
+                      {ad.actblue_revenue > 0 ? fmt(ad.actblue_revenue) : '$0'}
+                    </td>
+                    <td className={`py-1 px-1 text-right font-mono font-medium ${ad.roi >= 1.3 ? 'text-green-400' : ad.roi > 0 && ad.roi < 1.0 ? 'text-red-400' : ad.roi >= 1.0 ? 'text-yellow-400' : 'text-gray-600'}`}>
+                      {ad.roi > 0 ? `${ad.roi.toFixed(2)}x` : '-'}
+                    </td>
                     <td className="py-1 px-1 text-right text-gray-300">{ad.total_results}</td>
                     <td className={`py-1 px-1 text-right font-mono ${ad.cpp > 40 ? 'text-red-400' : ad.cpp < 25 && ad.cpp > 0 ? 'text-green-400' : 'text-gray-300'}`}>
                       {ad.cpp > 0 ? fmt(ad.cpp) : '-'}
                     </td>
-                    <td className={`py-1 px-1 text-right font-mono ${ad.actblue_revenue > 0 ? 'text-green-400' : 'text-gray-600'}`}>
-                      {ad.actblue_revenue > 0 ? fmt(ad.actblue_revenue) : '$0'}
-                    </td>
                     <td className={`py-1 px-1 text-right ${ad.frequency > 2.0 ? 'text-red-400' : 'text-gray-400'}`}>
                       {ad.frequency.toFixed(2)}
                     </td>
-                    <td className="py-1 px-1 text-gray-500 whitespace-nowrap">
-                      {ad.first_seen ? new Date(ad.first_seen + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '-'}
-                      {ad.is_new && (
-                        <span className="ml-1.5 px-1.5 py-0.5 text-[10px] font-bold uppercase rounded bg-blue-500/20 text-blue-400 border border-blue-500/30">
+                    <td className="py-1 px-1 text-center">
+                      {ad.trend === 'up' && <ArrowUp size={14} className="text-green-400 inline" />}
+                      {ad.trend === 'down' && <ArrowDown size={14} className="text-red-400 inline" />}
+                      {ad.trend === 'flat' && <Minus size={12} className="text-gray-600 inline" />}
+                      {ad.trend === 'new' && (
+                        <span className="px-1.5 py-0.5 text-[10px] font-bold uppercase rounded bg-blue-500/20 text-blue-400 border border-blue-500/30">
                           NEW
                         </span>
                       )}
+                    </td>
+                    <td className="py-1 px-1 text-gray-500 whitespace-nowrap">
+                      {ad.first_seen ? new Date(ad.first_seen + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '-'}
                     </td>
                     <td className="py-1 px-1">
                       {ad.recommendation === 'KILL' && (
