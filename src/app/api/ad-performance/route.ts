@@ -89,8 +89,11 @@ export async function GET(request: NextRequest) {
       const feeRate = adExt.fee_rate ?? 0.10;
       const spendWithFee = ad.total_spend + (ad.total_spend * feeRate);
 
-      // Ad is "new" if we have fewer than 3 days of data for it
-      const isNewAd = adExt.days_with_data < 3;
+      // Ad is "new" if first_seen is within the last 72 hours (calendar time)
+      const firstSeenDate = new Date(adExt.first_seen + 'T00:00:00');
+      const ageMs = Date.now() - firstSeenDate.getTime();
+      const ageHours = ageMs / (1000 * 60 * 60);
+      const isNewAd = ageHours < 72;
 
       // Check if ad is already inactive in Meta
       const isInactive = ad.ad_delivery && ad.ad_delivery.toLowerCase() !== 'active';
