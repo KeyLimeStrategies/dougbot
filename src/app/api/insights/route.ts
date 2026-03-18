@@ -3,12 +3,11 @@ import { getDb } from '@/lib/db';
 
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
-    const { api_key } = body;
+    const api_key = process.env.CLAUDE_API_KEY;
 
     if (!api_key) {
       return NextResponse.json(
-        { success: false, error: 'Claude API key is required' },
+        { success: false, error: 'Claude API key not configured. Add CLAUDE_API_KEY to Railway environment variables.' },
         { status: 400 }
       );
     }

@@ -1,43 +1,14 @@
 'use client';
 
 import { useState } from 'react';
-import { Sparkles, Loader2, AlertCircle, Key } from 'lucide-react';
+import { Sparkles, Loader2, AlertCircle } from 'lucide-react';
 
 export default function Insights() {
-  const [apiKey, setApiKey] = useState('');
-  const [savedKey, setSavedKey] = useState<string | null>(() => {
-    if (typeof window !== 'undefined') {
-      return localStorage.getItem('claude_api_key');
-    }
-    return null;
-  });
   const [report, setReport] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [showKeyInput, setShowKeyInput] = useState(false);
-
-  const activeKey = savedKey || apiKey;
-
-  const saveKey = () => {
-    if (apiKey) {
-      localStorage.setItem('claude_api_key', apiKey);
-      setSavedKey(apiKey);
-      setApiKey('');
-      setShowKeyInput(false);
-    }
-  };
-
-  const clearKey = () => {
-    localStorage.removeItem('claude_api_key');
-    setSavedKey(null);
-  };
 
   const generateReport = async () => {
-    if (!activeKey) {
-      setShowKeyInput(true);
-      return;
-    }
-
     setLoading(true);
     setError(null);
     setReport(null);
@@ -46,7 +17,7 @@ export default function Insights() {
       const res = await fetch('/api/insights', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ api_key: activeKey }),
+        body: JSON.stringify({}),
       });
       const data = await res.json();
 
@@ -54,10 +25,6 @@ export default function Insights() {
         setReport(data.report);
       } else {
         setError(data.error || 'Failed to generate insights');
-        if (data.error?.includes('401') || data.error?.includes('invalid')) {
-          clearKey();
-          setShowKeyInput(true);
-        }
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Request failed');
@@ -71,65 +38,11 @@ export default function Insights() {
         <h2 className="text-xl font-semibold text-white flex items-center gap-2">
           <Sparkles size={22} className="text-purple-400" /> Extract Insights
         </h2>
-        <div className="flex items-center gap-2">
-          {savedKey && (
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-gray-500 flex items-center gap-1">
-                <Key size={10} /> API key saved
-              </span>
-              <button
-                onClick={clearKey}
-                className="text-xs text-gray-600 hover:text-red-400 transition-colors"
-              >
-                Remove
-              </button>
-            </div>
-          )}
-          {!savedKey && !showKeyInput && (
-            <button
-              onClick={() => setShowKeyInput(true)}
-              className="text-xs text-gray-500 hover:text-gray-300 flex items-center gap-1"
-            >
-              <Key size={10} /> Set API Key
-            </button>
-          )}
-        </div>
       </div>
 
       <p className="text-gray-500 text-sm mb-4">
         Uses Claude to analyze your Meta and ActBlue data, identifying top/bottom performers, recommending immediate actions, and surfacing portfolio trends.
       </p>
-
-      {showKeyInput && !savedKey && (
-        <div className="bg-gray-800 border border-gray-700 rounded-lg p-4 mb-4">
-          <label className="block text-sm text-gray-400 mb-2">Claude API Key</label>
-          <div className="flex gap-2">
-            <input
-              type="password"
-              value={apiKey}
-              onChange={e => setApiKey(e.target.value)}
-              placeholder="sk-ant-..."
-              className="flex-1 bg-gray-900 border border-gray-600 text-gray-300 rounded px-3 py-2 text-sm font-mono"
-            />
-            <button
-              onClick={saveKey}
-              disabled={!apiKey}
-              className="px-4 py-2 rounded text-sm font-medium bg-purple-600 text-white hover:bg-purple-500 disabled:opacity-50 transition-colors"
-            >
-              Save
-            </button>
-            <button
-              onClick={() => setShowKeyInput(false)}
-              className="px-3 py-2 text-sm text-gray-400 hover:text-gray-300"
-            >
-              Cancel
-            </button>
-          </div>
-          <p className="text-xs text-gray-600 mt-2">
-            Your key is stored in your browser only (localStorage). It is sent to the server to call the Claude API but is never saved on the server.
-          </p>
-        </div>
-      )}
 
       <button
         onClick={generateReport}
@@ -157,7 +70,6 @@ export default function Insights() {
         <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-5">
           <div className="prose prose-invert prose-sm max-w-none">
             {report.split('\n').map((line, i) => {
-              // Bold headers
               if (line.startsWith('**') && line.endsWith('**')) {
                 return <h3 key={i} className="text-white font-semibold text-base mt-4 mb-2">{line.replace(/\*\*/g, '')}</h3>;
               }
