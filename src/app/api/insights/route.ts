@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 
+const CAMPAIGN_TYPE_LABELS: Record<string, string> = {
+  val: 'Value', cap: 'CostCap', num: 'Number', abx20: 'ABX',
+};
+
 export async function POST(request: NextRequest) {
   try {
     const api_key = process.env.CLAUDE_API_KEY;
@@ -14,7 +18,6 @@ export async function POST(request: NextRequest) {
 
     const db = getDb();
 
-    // Gather portfolio data for Claude to analyze
     const latestDate = db.prepare(
       "SELECT MAX(date) as d FROM daily_summary"
     ).get() as { d: string } | undefined;
@@ -26,7 +29,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Daily summaries for last 7 days
+    // === CLIENT DAILY SUMMARIES (last 7 days) ===
     const summaries = db.prepare(`
       SELECT ds.date, c.name, c.short_code,
         ds.total_spend, ds.total_revenue, ds.spend_with_fee,
@@ -38,29 +41,27 @@ export async function POST(request: NextRequest) {
       ORDER BY ds.date DESC, ds.total_spend DESC
     `).all(latestDate.d) as { date: string; name: string; short_code: string; total_spend: number; total_revenue: number; spend_with_fee: number; true_roas: number; profit: number; keylime_cut: number }[];
 
-    // Ad-level performance with ActBlue revenue
+    // === AD-LEVEL DATA ===
     const adData = db.prepare(`
       SELECT
         a.ad_name, c.name as client_name, c.short_code, c.fee_rate,
         a.campaign_type,
         SUM(a.spend) as total_spend,
         SUM(CASE WHEN a.date >= date(?, '-3 days') THEN a.spend ELSE 0 END) as spend_3d,
-        SUM(CASE WHEN a.date >= date(?, '-1 days') THEN a.spend ELSE 0 END) as spend_24h,
         SUM(a.results) as total_results,
         SUM(CASE WHEN a.date >= date(?, '-3 days') THEN a.results ELSE 0 END) as results_3d,
         MAX(a.frequency) as frequency,
-        MIN(a.date) as first_seen,
-        COUNT(DISTINCT a.date) as days_with_data
+        MIN(a.date) as first_seen
       FROM ad_spend a
       JOIN clients c ON c.id = a.client_id
       WHERE c.active = 1
       GROUP BY a.ad_name, c.name, c.short_code, c.fee_rate, a.campaign_type
       HAVING total_spend > 5
       ORDER BY spend_3d DESC
-      LIMIT 100
-    `).all(latestDate.d, latestDate.d, latestDate.d) as { ad_name: string; client_name: string; short_code: string; fee_rate: number; campaign_type: string; total_spend: number; spend_3d: number; spend_24h: number; total_results: number; results_3d: number; frequency: number; first_seen: string; days_with_data: number }[];
+      LIMIT 150
+    `).all(latestDate.d, latestDate.d) as { ad_name: string; client_name: string; short_code: string; fee_rate: number; campaign_type: string; total_spend: number; spend_3d: number; total_results: number; results_3d: number; frequency: number; first_seen: string }[];
 
-    // Get ActBlue revenue per ad (fbig only)
+    // === ACTBLUE REVENUE PER AD (fbig only) ===
     const revData = db.prepare(`
       SELECT r.refcode, SUM(r.amount) as total_revenue,
         SUM(CASE WHEN r.date >= date(?, '-3 days') THEN r.amount ELSE 0 END) as revenue_3d
@@ -76,6 +77,122 @@ export async function POST(request: NextRequest) {
       revMap.set(r.refcode, { total_revenue: r.total_revenue, revenue_3d: r.revenue_3d });
     }
 
+    // === CAMPAIGN-LEVEL AGGREGATION ===
+    const campaignMap = new Map<string, {
+      label: string; client_name: string; short_code: string; campaign_type: string;
+      fee_rate: number; ads: string[]; total_spend: number; spend_72h: number;
+      total_revenue: number; revenue_72h: number; total_results: number; results_72h: number;
+    }>();
+
+    for (const ad of adData) {
+      const key = `${ad.short_code}:${ad.campaign_type}`;
+      if (!campaignMap.has(key)) {
+        const typeLabel = CAMPAIGN_TYPE_LABELS[ad.campaign_type] || ad.campaign_type;
+        campaignMap.set(key, {
+          label: `${ad.client_name} ${typeLabel}`,
+          client_name: ad.client_name, short_code: ad.short_code,
+          campaign_type: ad.campaign_type, fee_rate: ad.fee_rate ?? 0.10,
+          ads: [], total_spend: 0, spend_72h: 0,
+          total_revenue: 0, revenue_72h: 0, total_results: 0, results_72h: 0,
+        });
+      }
+      const c = campaignMap.get(key)!;
+      c.ads.push(ad.ad_name);
+      c.total_spend += ad.total_spend;
+      c.spend_72h += ad.spend_3d;
+      c.total_results += ad.total_results;
+      c.results_72h += ad.results_3d;
+      const rev = revMap.get(ad.ad_name);
+      if (rev) {
+        c.total_revenue += rev.total_revenue;
+        c.revenue_72h += rev.revenue_3d;
+      }
+    }
+
+    // Portfolio-wide CPP for comparison
+    let portfolioResults72h = 0, portfolioSpend72h = 0;
+    for (const c of campaignMap.values()) {
+      portfolioResults72h += c.results_72h;
+      portfolioSpend72h += c.spend_72h;
+    }
+    const avgCpp = portfolioResults72h > 0 ? portfolioSpend72h / portfolioResults72h : 0;
+
+    // Build campaign summaries with recommendations
+    const campaignLines: string[] = [];
+    for (const [, c] of campaignMap.entries()) {
+      const spendWithFee72h = c.spend_72h + (c.spend_72h * c.fee_rate);
+      const roi72h = spendWithFee72h > 0 ? c.revenue_72h / spendWithFee72h : 0;
+      const cpp72h = c.results_72h > 0 ? c.spend_72h / c.results_72h : 0;
+      const totalSpendWithFee = c.total_spend + (c.total_spend * c.fee_rate);
+      const totalRoi = totalSpendWithFee > 0 ? c.total_revenue / totalSpendWithFee : 0;
+
+      let rec = 'HOLD';
+      let reason = 'Insufficient signal';
+      if (c.spend_72h >= 20) {
+        if (roi72h >= 1.3) { rec = 'SCALE'; reason = `72h ROI ${roi72h.toFixed(2)}x`; }
+        else if (roi72h >= 1.0 && cpp72h > 0 && avgCpp > 0 && cpp72h < avgCpp * 0.8) { rec = 'SCALE'; reason = `CPP ${((1 - cpp72h / avgCpp) * 100).toFixed(0)}% below avg`; }
+        else if (c.revenue_72h > 0 && roi72h < 1.0) { rec = 'DROP'; reason = `72h ROI ${roi72h.toFixed(2)}x`; }
+        else if (cpp72h > 0 && avgCpp > 0 && cpp72h > avgCpp * 1.5) { rec = 'DROP'; reason = `CPP ${((cpp72h / avgCpp - 1) * 100).toFixed(0)}% above avg`; }
+        else if (c.results_72h === 0 && c.spend_72h > 50) { rec = 'DROP'; reason = `$${c.spend_72h.toFixed(0)} spent, 0 results`; }
+      }
+
+      campaignLines.push(
+        `${c.label} [${rec}] | ${c.ads.length} ads | Total: $${c.total_spend.toFixed(0)} spend, $${c.total_revenue.toFixed(0)} rev, ${totalRoi.toFixed(2)}x ROI | 72h: $${c.spend_72h.toFixed(0)} spend, $${c.revenue_72h.toFixed(0)} rev, ${roi72h.toFixed(2)}x ROI, CPP $${cpp72h > 0 ? cpp72h.toFixed(2) : 'N/A'} | Reason: ${reason}`
+      );
+    }
+
+    // === CAMPAIGN DAILY TRENDS (spend + revenue per campaign per day, last 7 days) ===
+    const campaignDailyData = db.prepare(`
+      SELECT
+        a.date,
+        c.name || ' ' || CASE a.campaign_type
+          WHEN 'val' THEN 'Value' WHEN 'cap' THEN 'CostCap'
+          WHEN 'num' THEN 'Number' WHEN 'abx20' THEN 'ABX'
+          ELSE a.campaign_type END as campaign,
+        c.short_code, c.fee_rate, a.campaign_type,
+        SUM(a.spend) as daily_spend,
+        SUM(a.results) as daily_results
+      FROM ad_spend a
+      JOIN clients c ON c.id = a.client_id
+      WHERE a.date >= date(?, '-7 days') AND c.active = 1
+      GROUP BY a.date, c.short_code, a.campaign_type
+      ORDER BY a.date DESC, daily_spend DESC
+    `).all(latestDate.d) as { date: string; campaign: string; short_code: string; fee_rate: number; campaign_type: string; daily_spend: number; daily_results: number }[];
+
+    // Get daily revenue per campaign (fbig only)
+    const campaignDailyRev = db.prepare(`
+      SELECT
+        r.date,
+        c.short_code,
+        CASE
+          WHEN LOWER(r.refcode) LIKE '%.val%' THEN 'val'
+          WHEN LOWER(r.refcode) LIKE '%.cap%' THEN 'cap'
+          WHEN LOWER(r.refcode) LIKE '%.abx20%' THEN 'abx20'
+          WHEN LOWER(r.refcode) LIKE '%.num%' THEN 'num'
+          ELSE 'val'
+        END as campaign_type,
+        SUM(r.amount) as daily_revenue
+      FROM revenue r
+      JOIN clients c ON c.id = r.client_id
+      WHERE r.date >= date(?, '-7 days') AND c.active = 1
+        AND r.fundraising_page LIKE '%fbig%'
+        AND r.refcode IS NOT NULL AND r.refcode != ''
+      GROUP BY r.date, c.short_code, campaign_type
+    `).all(latestDate.d) as { date: string; short_code: string; campaign_type: string; daily_revenue: number }[];
+
+    const dailyRevMap = new Map<string, number>();
+    for (const r of campaignDailyRev) {
+      dailyRevMap.set(`${r.date}|${r.short_code}:${r.campaign_type}`, r.daily_revenue);
+    }
+
+    const campaignTrendLines = campaignDailyData.map(d => {
+      const rev = dailyRevMap.get(`${d.date}|${d.short_code}:${d.campaign_type}`) ?? 0;
+      const feeRate = d.fee_rate ?? 0.10;
+      const swf = d.daily_spend + (d.daily_spend * feeRate);
+      const roi = swf > 0 ? rev / swf : 0;
+      return `${d.date} | ${d.campaign} | Spend: $${d.daily_spend.toFixed(0)} | Rev: $${rev.toFixed(0)} | ROI: ${roi.toFixed(2)}x | Results: ${d.daily_results}`;
+    }).join('\n');
+
     // Build ad summary with revenue
     const adSummary = adData.map(ad => {
       const rev = revMap.get(ad.ad_name);
@@ -83,11 +200,13 @@ export async function POST(request: NextRequest) {
       const feeRate = ad.fee_rate ?? 0.10;
       const spendWithFee = ad.total_spend + (ad.total_spend * feeRate);
       const roi = spendWithFee > 0 ? abRev / spendWithFee : 0;
-      const isNew = ad.days_with_data < 3;
-      return `${ad.ad_name} | ${ad.client_name} ${ad.campaign_type} | Spend: $${ad.total_spend.toFixed(0)} (3d: $${ad.spend_3d.toFixed(0)}) | AB Rev: $${abRev.toFixed(0)} | ROI: ${roi.toFixed(2)}x | Results: ${ad.total_results} (3d: ${ad.results_3d}) | CPP: ${ad.total_results > 0 ? '$' + (ad.total_spend / ad.total_results).toFixed(2) : 'N/A'} | Freq: ${ad.frequency.toFixed(2)} | First: ${ad.first_seen}${isNew ? ' [NEW]' : ''}`;
+      const firstSeen = new Date(ad.first_seen + 'T00:00:00');
+      const ageHours = (Date.now() - firstSeen.getTime()) / (1000 * 60 * 60);
+      const isNew = ageHours < 72;
+      return `${ad.ad_name} | ${ad.client_name} ${ad.campaign_type} | Spend: $${ad.total_spend.toFixed(0)} (3d: $${ad.spend_3d.toFixed(0)}) | AB Rev: $${abRev.toFixed(0)} | ROI: ${roi.toFixed(2)}x | Results: ${ad.total_results} (3d: ${ad.results_3d}) | CPP: ${ad.total_results > 0 ? '$' + (ad.total_spend / ad.total_results).toFixed(2) : 'N/A'} | Freq: ${ad.frequency.toFixed(2)} | First: ${ad.first_seen}${isNew ? ' [NEW <72h]' : ''}`;
     }).join('\n');
 
-    // Build daily summary
+    // Build client daily summary
     const dailySummary = summaries.map(s =>
       `${s.date} | ${s.name} | Spend: $${s.total_spend.toFixed(0)} | Rev: $${s.total_revenue.toFixed(0)} | ROAS: ${s.true_roas.toFixed(2)}x | Profit: $${s.profit.toFixed(0)} | KL Cut: $${s.keylime_cut.toFixed(0)}`
     ).join('\n');
@@ -98,33 +217,46 @@ export async function POST(request: NextRequest) {
     const totalRev = todaySummaries.reduce((s, r) => s + r.total_revenue, 0);
     const totalProfit = todaySummaries.reduce((s, r) => s + r.profit, 0);
 
-    const prompt = `You are a senior digital advertising analyst for Keylime Strategies, a Democratic political consulting firm that manages Meta (Facebook/Instagram) ad campaigns for congressional candidates.
+    const prompt = `You are a senior digital advertising analyst for Keylime Strategies, a Democratic political consulting firm managing Meta (Facebook/Instagram) ad campaigns for congressional candidates.
 
 Today's date: ${latestDate.d}
 Portfolio overview for today: $${totalSpend.toFixed(0)} spent, $${totalRev.toFixed(0)} revenue, $${totalProfit.toFixed(0)} profit
+Portfolio avg CPP (72h): $${avgCpp.toFixed(2)}
 
 BUSINESS RULES:
-- True ROAS = ActBlue Revenue / (Meta Spend + Fee). Fee is typically 10% of spend.
-- An ad is "new" if it has fewer than 3 days of data (learning phase, don't recommend killing)
-- KILL criteria: >$50 spent + 0 results, OR ROI < 0.5x on $50+ spend, OR frequency > 2.0
-- Revenue is only counted from ActBlue forms marked "fbig" (ad-attributed donations)
-- Campaign types: val (Value), cap (CostCap), num (Number), abx20 (ABX)
+- True ROAS = ActBlue Revenue / (Meta Spend + Fee). Fee is typically 10% of spend (5% for Riker).
+- A "campaign" = client + campaign type (e.g., "Kinter Value" = all mk*.val ads). This is what we scale/drop budgets on.
+- Campaign types: val (Value optimization), cap (CostCap), num (Number of conversions), abx20 (ABX)
+- SCALE: increase campaign budget 20% when 72h ROI >= 1.3x or CPP 20%+ below portfolio avg
+- DROP: decrease campaign budget 15% when 72h ROI < 1.0x or CPP 50%+ above avg
+- KILL (ad-level): individual ads with >$50 spent + 0 results, OR ROI < 0.5x on $50+ spend, OR frequency > 2.0
+- Ads under 72 hours old are in learning phase, do not recommend killing them
+- Revenue only counted from ActBlue "fbig" forms (ad-attributed donations)
+- No budget changes within 48hrs of last change
 
-DAILY SUMMARIES (last 7 days):
+CAMPAIGN SUMMARIES WITH RECOMMENDATIONS (${campaignMap.size} campaigns):
+${campaignLines.join('\n')}
+
+CAMPAIGN DAILY TRENDS (last 7 days, spend/rev/ROI per campaign per day):
+${campaignTrendLines}
+
+CLIENT DAILY SUMMARIES (last 7 days):
 ${dailySummary}
 
-TOP ADS BY RECENT SPEND (with ActBlue revenue):
+TOP ADS BY RECENT SPEND (individual ad performance):
 ${adSummary}
 
-Please analyze this data and provide a concise, actionable report answering:
+Please analyze this data and provide a concise, actionable report:
 
-1. **Top Performers & Problem Ads**: Which specific ads are doing particularly well or poorly? Call out any new ads showing early promise or concern.
+1. **Campaign Health**: Evaluate each campaign's trajectory. Which campaigns are trending up or down over the past week? Are any campaigns consistently underperforming that we should consider pausing? Any campaigns showing momentum we should lean into?
 
-2. **Immediate Actions**: What specific actions should be taken RIGHT NOW to improve portfolio ROI? Be concrete (e.g., "Kill mk5_2_1.val, $65 spent with $0 revenue" or "Scale br30_7_1.val, strong 3d performance").
+2. **Top Performers & Problem Ads**: Which specific ads stand out as winners or losers? Any new ads (under 72h) showing early promise or concern?
 
-3. **Portfolio Insights**: Any patterns, trends, or notable observations about the overall portfolio performance today vs recent days.
+3. **Immediate Actions**: Concrete, specific actions to take RIGHT NOW. Include campaign-level budget recommendations (SCALE/DROP with amounts) and ad-level kills. Reference actual names and numbers.
 
-Keep the response direct and practical. No fluff. Use the actual ad names and numbers.`;
+4. **Portfolio Insights**: Broader patterns across the portfolio. How is overall ROI trending? Any campaign types (Value vs CostCap vs ABX) performing systematically better? Client-level observations?
+
+Keep it direct and practical. No fluff. Use actual ad/campaign names and numbers throughout.`;
 
     // Call Claude API
     const claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
@@ -136,7 +268,7 @@ Keep the response direct and practical. No fluff. Use the actual ad names and nu
       },
       body: JSON.stringify({
         model: 'claude-opus-4-20250514',
-        max_tokens: 2000,
+        max_tokens: 4000,
         messages: [{ role: 'user', content: prompt }],
       }),
     });
