@@ -35,6 +35,8 @@ export interface AdPerformance {
   cpp_3d: number;
   frequency: number;
   actblue_revenue: number;
+  first_seen: string;
+  is_new: boolean;
   recommendation: 'KILL' | 'OK';
   kill_reason?: string;
 }

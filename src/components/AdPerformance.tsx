@@ -317,13 +317,16 @@ function CampaignCard({
                   <th className="text-right py-1 px-1">Results</th>
                   <th className="text-right py-1 px-1">CPP</th>
                   <th className="text-right py-1 px-1">Freq</th>
+                  <th className="text-left py-1 px-1">Launched</th>
                   <th className="text-left py-1 px-1">Status</th>
                 </tr>
               </thead>
               <tbody>
                 {campaignAds.map(ad => (
                   <tr key={ad.ad_name} className={`border-t border-gray-800/30 ${ad.recommendation === 'KILL' ? 'text-red-400/80' : ''}`}>
-                    <td className="py-1 px-1 text-gray-300 font-mono">{ad.ad_name}</td>
+                    <td className="py-1 px-1 text-gray-300 font-mono">
+                      {ad.ad_name}
+                    </td>
                     <td className="py-1 px-1 text-gray-500">{ad.campaign_type}</td>
                     <td className="py-1 px-1 text-right text-gray-300">{fmt(ad.total_spend)}</td>
                     <td className="py-1 px-1 text-right text-gray-400">{fmt(ad.spend_3d)}</td>
@@ -333,6 +336,14 @@ function CampaignCard({
                     </td>
                     <td className={`py-1 px-1 text-right ${ad.frequency > 2.0 ? 'text-red-400' : 'text-gray-400'}`}>
                       {ad.frequency.toFixed(2)}
+                    </td>
+                    <td className="py-1 px-1 text-gray-500 whitespace-nowrap">
+                      {ad.first_seen ? new Date(ad.first_seen + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '-'}
+                      {ad.is_new && (
+                        <span className="ml-1.5 px-1.5 py-0.5 text-[10px] font-bold uppercase rounded bg-blue-500/20 text-blue-400 border border-blue-500/30">
+                          NEW
+                        </span>
+                      )}
                     </td>
                     <td className="py-1 px-1">
                       {ad.recommendation === 'KILL' && (

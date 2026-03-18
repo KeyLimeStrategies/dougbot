@@ -140,6 +140,8 @@ export async function GET(request: NextRequest) {
         cpp_3d: cpp3d === Infinity ? 0 : cpp3d,
         frequency: ad.frequency,
         actblue_revenue: actblueRevenue,
+        first_seen: adWithDates.first_seen,
+        is_new: isNewAd,
         recommendation,
         kill_reason,
       };
