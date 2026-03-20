@@ -116,6 +116,13 @@ function initializeSchema(db: Database.Database) {
     // Column already exists
   }
 
+  // Add recurrence_number column to revenue (1 = first-time, >1 = recurring)
+  try {
+    db.exec(`ALTER TABLE revenue ADD COLUMN recurrence_number INTEGER NOT NULL DEFAULT 1`);
+  } catch {
+    // Column already exists
+  }
+
   // Seed clients
   const insertClient = db.prepare(
     'INSERT OR IGNORE INTO clients (short_code, name, entity_name) VALUES (?, ?, ?)'

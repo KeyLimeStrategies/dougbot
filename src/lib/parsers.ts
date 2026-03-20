@@ -253,18 +253,19 @@ export function parseActBlueCsv(csvText: string, filename: string): { rowsProces
   }
 
   const insertRevenue = db.prepare(`
-    INSERT INTO revenue (date, client_id, refcode, amount, donor_name, member_code, receipt_id, fundraising_page)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO revenue (date, client_id, refcode, amount, donor_name, member_code, receipt_id, fundraising_page, recurrence_number)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(receipt_id) DO UPDATE SET
       amount = excluded.amount,
       refcode = excluded.refcode,
-      fundraising_page = excluded.fundraising_page
+      fundraising_page = excluded.fundraising_page,
+      recurrence_number = excluded.recurrence_number
   `);
 
   // Fallback for rows without receipt_id (manual uploads)
   const insertRevenueNoReceipt = db.prepare(`
-    INSERT INTO revenue (date, client_id, refcode, amount, donor_name, member_code, fundraising_page)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO revenue (date, client_id, refcode, amount, donor_name, member_code, fundraising_page, recurrence_number)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   let rowsProcessed = 0;
@@ -278,6 +279,7 @@ export function parseActBlueCsv(csvText: string, filename: string): { rowsProces
       const receiptId = row['Lineitem ID'] || row['Receipt ID'] || '';
       const donorName = `${row['First Name'] || row['Donor First Name'] || ''} ${row['Last Name'] || row['Donor Last Name'] || ''}`.trim();
       const fundraisingPage = row['Fundraising Page'] || '';
+      const recurrenceNumber = parseInt(row['Recurrence Number'] || '1', 10) || 1;
 
       if (!dateStr || amount <= 0) continue;
 
@@ -298,9 +300,9 @@ export function parseActBlueCsv(csvText: string, filename: string): { rowsProces
       if (!clientId) continue;
 
       if (receiptId) {
-        insertRevenue.run(date, clientId, refcode, amount, donorName, recipient, receiptId, fundraisingPage);
+        insertRevenue.run(date, clientId, refcode, amount, donorName, recipient, receiptId, fundraisingPage, recurrenceNumber);
       } else {
-        insertRevenueNoReceipt.run(date, clientId, refcode, amount, donorName, recipient, fundraisingPage);
+        insertRevenueNoReceipt.run(date, clientId, refcode, amount, donorName, recipient, fundraisingPage, recurrenceNumber);
       }
       rowsProcessed++;
     }

@@ -8,36 +8,82 @@ export async function GET(request: NextRequest) {
     const searchParams = request.nextUrl.searchParams;
     const date = searchParams.get('date');
     const days = parseInt(searchParams.get('days') || '7', 10);
+    const excludeRecurring = searchParams.get('exclude_recurring') === 'true';
 
-    let query: string;
-    let params: (string | number)[];
+    let rows: DailySummary[];
 
-    if (date) {
-      query = `
-        SELECT ds.date, ds.client_id, c.name as client_name, c.short_code,
-               ds.total_spend, ds.total_revenue, ds.spend_with_fee,
-               ds.true_roas, ds.profit, ds.keylime_cut
-        FROM daily_summary ds
-        JOIN clients c ON c.id = ds.client_id
-        WHERE ds.date = ? AND c.active = 1
-        ORDER BY ds.true_roas DESC
-      `;
-      params = [date];
+    if (excludeRecurring) {
+      // Recalculate on the fly using only first-time contributions
+      const dateWhere = date
+        ? `AND a.date = ?`
+        : `AND a.date >= date('now', '-' || ? || ' days')`;
+      const queryParams = date ? [date] : [days];
+
+      rows = db.prepare(`
+        SELECT
+          a.date,
+          a.client_id,
+          c.name as client_name,
+          c.short_code,
+          COALESCE(spend.total_spend, 0) as total_spend,
+          COALESCE(rev.total_revenue, 0) as total_revenue,
+          COALESCE(spend.total_spend, 0) + (COALESCE(spend.total_spend, 0) * c.fee_rate) as spend_with_fee,
+          CASE WHEN (COALESCE(spend.total_spend, 0) + (COALESCE(spend.total_spend, 0) * c.fee_rate)) > 0
+            THEN COALESCE(rev.total_revenue, 0) / (COALESCE(spend.total_spend, 0) + (COALESCE(spend.total_spend, 0) * c.fee_rate))
+            ELSE 0 END as true_roas,
+          COALESCE(rev.total_revenue, 0) - (COALESCE(spend.total_spend, 0) + (COALESCE(spend.total_spend, 0) * c.fee_rate)) as profit,
+          (COALESCE(spend.total_spend, 0) * c.fee_rate) +
+            CASE WHEN COALESCE(rev.total_revenue, 0) - (COALESCE(spend.total_spend, 0) + (COALESCE(spend.total_spend, 0) * c.fee_rate)) > 0
+              THEN (COALESCE(rev.total_revenue, 0) - (COALESCE(spend.total_spend, 0) + (COALESCE(spend.total_spend, 0) * c.fee_rate))) * 0.25
+              ELSE 0 END as keylime_cut
+        FROM (
+          SELECT DISTINCT date, client_id FROM ad_spend
+          UNION
+          SELECT DISTINCT date, client_id FROM revenue WHERE fundraising_page LIKE '%fbig%' AND recurrence_number = 1
+        ) a
+        JOIN clients c ON c.id = a.client_id
+        LEFT JOIN (
+          SELECT date, client_id, SUM(spend) as total_spend FROM ad_spend GROUP BY date, client_id
+        ) spend ON spend.date = a.date AND spend.client_id = a.client_id
+        LEFT JOIN (
+          SELECT date, client_id, SUM(amount) as total_revenue
+          FROM revenue
+          WHERE fundraising_page LIKE '%fbig%' AND recurrence_number = 1
+          GROUP BY date, client_id
+        ) rev ON rev.date = a.date AND rev.client_id = a.client_id
+        WHERE c.active = 1 ${dateWhere}
+        ORDER BY a.date DESC, true_roas DESC
+      `).all(...queryParams) as DailySummary[];
     } else {
-      // Use today's date as reference so buttons mean "last N days from today"
-      query = `
-        SELECT ds.date, ds.client_id, c.name as client_name, c.short_code,
-               ds.total_spend, ds.total_revenue, ds.spend_with_fee,
-               ds.true_roas, ds.profit, ds.keylime_cut
-        FROM daily_summary ds
-        JOIN clients c ON c.id = ds.client_id
-        WHERE ds.date >= date('now', '-' || ? || ' days') AND c.active = 1
-        ORDER BY ds.date DESC, ds.true_roas DESC
-      `;
-      params = [days];
-    }
+      let query: string;
+      let params: (string | number)[];
 
-    const rows = db.prepare(query).all(...params) as DailySummary[];
+      if (date) {
+        query = `
+          SELECT ds.date, ds.client_id, c.name as client_name, c.short_code,
+                 ds.total_spend, ds.total_revenue, ds.spend_with_fee,
+                 ds.true_roas, ds.profit, ds.keylime_cut
+          FROM daily_summary ds
+          JOIN clients c ON c.id = ds.client_id
+          WHERE ds.date = ? AND c.active = 1
+          ORDER BY ds.true_roas DESC
+        `;
+        params = [date];
+      } else {
+        query = `
+          SELECT ds.date, ds.client_id, c.name as client_name, c.short_code,
+                 ds.total_spend, ds.total_revenue, ds.spend_with_fee,
+                 ds.true_roas, ds.profit, ds.keylime_cut
+          FROM daily_summary ds
+          JOIN clients c ON c.id = ds.client_id
+          WHERE ds.date >= date('now', '-' || ? || ' days') AND c.active = 1
+          ORDER BY ds.date DESC, ds.true_roas DESC
+        `;
+        params = [days];
+      }
+
+      rows = db.prepare(query).all(...params) as DailySummary[];
+    }
 
     // Calculate 3-day rolling ROAS for each client
     const clientDates = new Map<number, { date: string; revenue: number; spendWithFee: number }[]>();

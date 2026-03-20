@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
-import { Copy, Check } from 'lucide-react';
+import { Copy, Check, RotateCw } from 'lucide-react';
 import type { DailySummary } from '@/lib/types';
 
 function roasColor(roas: number): string {
@@ -33,10 +33,12 @@ export default function DailyROI({ refreshKey }: { refreshKey: number }) {
   const [days, setDays] = useState(1);
   const [roiText, setRoiText] = useState('');
   const [copied, setCopied] = useState(false);
+  const [excludeRecurring, setExcludeRecurring] = useState(false);
 
   useEffect(() => {
     const params = selectedDate ? `?date=${selectedDate}` : `?days=${days}`;
-    fetch(`/api/daily-roi${params}`)
+    const recurParam = excludeRecurring ? '&exclude_recurring=true' : '';
+    fetch(`/api/daily-roi${params}${recurParam}`)
       .then(r => r.json())
       .then(d => {
         setData(d);
@@ -48,7 +50,7 @@ export default function DailyROI({ refreshKey }: { refreshKey: number }) {
         }
       })
       .catch(console.error);
-  }, [selectedDate, days, refreshKey]);
+  }, [selectedDate, days, refreshKey, excludeRecurring]);
 
   const fetchRoiText = (date: string) => {
     fetch(`/api/roi-text?date=${date}`)
@@ -145,7 +147,21 @@ export default function DailyROI({ refreshKey }: { refreshKey: number }) {
   return (
     <div>
       <div className="flex items-center justify-between mb-4">
-        <h2 className="text-lg font-semibold text-white">Daily ROI Summary</h2>
+        <div className="flex items-center gap-3">
+          <h2 className="text-lg font-semibold text-white">Daily ROI Summary</h2>
+          <button
+            onClick={() => setExcludeRecurring(!excludeRecurring)}
+            className={`flex items-center gap-1.5 px-3 py-1 text-xs rounded-full border transition-colors ${
+              excludeRecurring
+                ? 'bg-orange-900/30 border-orange-700 text-orange-300'
+                : 'bg-gray-800 border-gray-700 text-gray-400 hover:border-gray-600'
+            }`}
+            title={excludeRecurring ? 'Showing first-time contributions only' : 'Showing all contributions (including recurring)'}
+          >
+            <RotateCw size={12} />
+            {excludeRecurring ? 'Recurring OFF' : 'Recurring ON'}
+          </button>
+        </div>
         <div className="flex gap-2">
           {[1, 3, 7, 14, 30].map(d => (
             <button
