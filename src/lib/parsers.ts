@@ -275,7 +275,7 @@ export function parseActBlueCsv(csvText: string, filename: string): { rowsProces
       const dateStr = row['Date'] || row['date'] || row['Payment Date'] || '';
       const refcode = row['Refcode'] || row['refcode'] || row['Reference Code'] || '';
       const recipient = row['Recipient'] || row['recipient'] || '';
-      const receiptId = row['Receipt ID'] || row['Lineitem ID'] || '';
+      const receiptId = row['Lineitem ID'] || row['Receipt ID'] || '';
       const donorName = `${row['First Name'] || row['Donor First Name'] || ''} ${row['Last Name'] || row['Donor Last Name'] || ''}`.trim();
       const fundraisingPage = row['Fundraising Page'] || '';
 
