@@ -24,6 +24,22 @@ export async function GET(request: NextRequest) {
     const searchParams = request.nextUrl.searchParams;
     const clientFilter = searchParams.get('client');
 
+    // Use Eastern Time for date boundaries (SQLite date('now') uses UTC which causes off-by-one errors)
+    const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+    const todayET = nowET.toISOString().split('T')[0];
+    const threeDaysAgo = new Date(nowET);
+    threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
+    const threeDaysAgoET = threeDaysAgo.toISOString().split('T')[0];
+    const oneDayAgo = new Date(nowET);
+    oneDayAgo.setDate(oneDayAgo.getDate() - 1);
+    const oneDayAgoET = oneDayAgo.toISOString().split('T')[0];
+    const twoDaysAgo = new Date(nowET);
+    twoDaysAgo.setDate(twoDaysAgo.getDate() - 2);
+    const twoDaysAgoET = twoDaysAgo.toISOString().split('T')[0];
+    const sevenDaysAgo = new Date(nowET);
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    const sevenDaysAgoET = sevenDaysAgo.toISOString().split('T')[0];
+
     let clientWhere = '';
     const params: string[] = [];
     if (clientFilter) {
@@ -43,38 +59,38 @@ export async function GET(request: NextRequest) {
         MAX(a.ad_delivery) as ad_delivery,
         MAX(a.attribution_setting) as attribution_setting,
         SUM(a.spend) as total_spend,
-        SUM(CASE WHEN a.date >= date('now', '-3 days') THEN a.spend ELSE 0 END) as spend_3d,
+        SUM(CASE WHEN a.date >= ? THEN a.spend ELSE 0 END) as spend_3d,
         SUM(a.results) as total_results,
-        SUM(CASE WHEN a.date >= date('now', '-3 days') THEN a.results ELSE 0 END) as results_3d,
+        SUM(CASE WHEN a.date >= ? THEN a.results ELSE 0 END) as results_3d,
         MAX(a.frequency) as frequency,
         MIN(a.date) as first_seen,
         MAX(a.date) as last_seen,
         COUNT(DISTINCT a.date) as days_with_data,
-        SUM(CASE WHEN a.date >= date('now', '-1 days') THEN a.spend ELSE 0 END) as spend_24h,
-        SUM(CASE WHEN a.date >= date('now', '-2 days') AND a.date < date('now', '-1 days') THEN a.spend ELSE 0 END) as spend_prev_24h,
-        SUM(CASE WHEN a.date >= date('now', '-1 days') THEN a.results ELSE 0 END) as results_24h,
-        SUM(CASE WHEN a.date >= date('now', '-2 days') AND a.date < date('now', '-1 days') THEN a.results ELSE 0 END) as results_prev_24h
+        SUM(CASE WHEN a.date >= ? THEN a.spend ELSE 0 END) as spend_24h,
+        SUM(CASE WHEN a.date >= ? AND a.date < ? THEN a.spend ELSE 0 END) as spend_prev_24h,
+        SUM(CASE WHEN a.date >= ? THEN a.results ELSE 0 END) as results_24h,
+        SUM(CASE WHEN a.date >= ? AND a.date < ? THEN a.results ELSE 0 END) as results_prev_24h
       FROM ad_spend a
       JOIN clients c ON c.id = a.client_id
       WHERE c.active = 1 ${clientWhere}
       GROUP BY a.ad_name, c.name, c.short_code, c.fee_rate
       ORDER BY total_spend DESC
-    `).all(...params) as (AdPerformance & { fee_rate: number; first_seen: string; last_seen: string; days_with_data: number; spend_24h: number; spend_prev_24h: number; results_24h: number; results_prev_24h: number })[];
+    `).all(threeDaysAgoET, threeDaysAgoET, oneDayAgoET, twoDaysAgoET, oneDayAgoET, oneDayAgoET, twoDaysAgoET, oneDayAgoET, ...params) as (AdPerformance & { fee_rate: number; first_seen: string; last_seen: string; days_with_data: number; spend_24h: number; spend_prev_24h: number; results_24h: number; results_prev_24h: number })[];
 
     // Get ActBlue revenue per refcode (ad name) for KILL decisions
     const revenueRows = db.prepare(`
       SELECT
         r.refcode,
         SUM(r.amount) as total_revenue,
-        SUM(CASE WHEN r.date >= date('now', '-3 days') THEN r.amount ELSE 0 END) as revenue_72h,
-        SUM(CASE WHEN r.date >= date('now', '-1 days') THEN r.amount ELSE 0 END) as revenue_24h,
-        SUM(CASE WHEN r.date >= date('now', '-2 days') AND r.date < date('now', '-1 days') THEN r.amount ELSE 0 END) as revenue_prev_24h
+        SUM(CASE WHEN r.date >= ? THEN r.amount ELSE 0 END) as revenue_72h,
+        SUM(CASE WHEN r.date >= ? THEN r.amount ELSE 0 END) as revenue_24h,
+        SUM(CASE WHEN r.date >= ? AND r.date < ? THEN r.amount ELSE 0 END) as revenue_prev_24h
       FROM revenue r
       JOIN clients c ON c.id = r.client_id
       WHERE r.refcode IS NOT NULL AND r.refcode != '' AND c.active = 1
         AND r.fundraising_page LIKE '%fbig%' ${clientWhere}
       GROUP BY r.refcode
-    `).all(...params) as { refcode: string; total_revenue: number; revenue_72h: number; revenue_24h: number; revenue_prev_24h: number }[];
+    `).all(threeDaysAgoET, oneDayAgoET, twoDaysAgoET, oneDayAgoET, ...params) as { refcode: string; total_revenue: number; revenue_72h: number; revenue_24h: number; revenue_prev_24h: number }[];
 
     const revenueMap = new Map<string, { total_revenue: number; revenue_72h: number; revenue_24h: number; revenue_prev_24h: number }>();
     for (const r of revenueRows) {
@@ -97,7 +113,7 @@ export async function GET(request: NextRequest) {
 
       // Check if ad is inactive: either Meta marks it inactive, or no spend in last 7 days
       const isInactive = (ad.ad_delivery && ad.ad_delivery.toLowerCase() !== 'active')
-        || (adExt.spend_24h === 0 && ad.spend_3d === 0 && adExt.last_seen < new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]);
+        || (adExt.spend_24h === 0 && ad.spend_3d === 0 && adExt.last_seen < sevenDaysAgoET);
 
       // ROI calculation
       const hasActBlueData = actblueRevenue > 0;
@@ -193,14 +209,14 @@ export async function GET(request: NextRequest) {
         c.fee_rate,
         MAX(a.campaign_type) as campaign_type,
         SUM(a.spend) as total_spend,
-        SUM(CASE WHEN a.date >= date('now', '-3 days') THEN a.spend ELSE 0 END) as spend_72h,
+        SUM(CASE WHEN a.date >= ? THEN a.spend ELSE 0 END) as spend_72h,
         SUM(a.results) as total_results,
-        SUM(CASE WHEN a.date >= date('now', '-3 days') THEN a.results ELSE 0 END) as results_72h
+        SUM(CASE WHEN a.date >= ? THEN a.results ELSE 0 END) as results_72h
       FROM ad_spend a
       JOIN clients c ON c.id = a.client_id
       WHERE c.active = 1 ${clientWhere}
       GROUP BY a.ad_name, c.name, c.short_code, c.fee_rate
-    `).all(...params) as { ad_name: string; client_name: string; short_code: string; fee_rate: number; campaign_type: string; total_spend: number; spend_72h: number; total_results: number; results_72h: number }[];
+    `).all(threeDaysAgoET, threeDaysAgoET, ...params) as { ad_name: string; client_name: string; short_code: string; fee_rate: number; campaign_type: string; total_spend: number; spend_72h: number; total_results: number; results_72h: number }[];
 
     // Aggregate by client + campaign_type (= Meta campaign)
     // (revenueMap already built above for KILL logic)

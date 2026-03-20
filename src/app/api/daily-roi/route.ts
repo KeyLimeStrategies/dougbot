@@ -10,14 +10,20 @@ export async function GET(request: NextRequest) {
     const days = parseInt(searchParams.get('days') || '7', 10);
     const excludeRecurring = searchParams.get('exclude_recurring') === 'true';
 
+    // Use Eastern Time for date boundaries
+    const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+    const nDaysAgo = new Date(nowET);
+    nDaysAgo.setDate(nDaysAgo.getDate() - days);
+    const nDaysAgoET = nDaysAgo.toISOString().split('T')[0];
+
     let rows: DailySummary[];
 
     if (excludeRecurring) {
       // Recalculate on the fly using only first-time contributions
       const dateWhere = date
         ? `AND a.date = ?`
-        : `AND a.date >= date('now', '-' || ? || ' days')`;
-      const queryParams = date ? [date] : [days];
+        : `AND a.date >= ?`;
+      const queryParams = date ? [date] : [nDaysAgoET];
 
       rows = db.prepare(`
         SELECT
@@ -76,10 +82,10 @@ export async function GET(request: NextRequest) {
                  ds.true_roas, ds.profit, ds.keylime_cut
           FROM daily_summary ds
           JOIN clients c ON c.id = ds.client_id
-          WHERE ds.date >= date('now', '-' || ? || ' days') AND c.active = 1
+          WHERE ds.date >= ? AND c.active = 1
           ORDER BY ds.date DESC, ds.true_roas DESC
         `;
-        params = [days];
+        params = [nDaysAgoET];
       }
 
       rows = db.prepare(query).all(...params) as DailySummary[];
