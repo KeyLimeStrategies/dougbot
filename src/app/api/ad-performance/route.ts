@@ -38,10 +38,10 @@ export async function GET(request: NextRequest) {
         c.name as client_name,
         c.short_code,
         c.fee_rate,
-        a.campaign_type,
-        a.batch,
-        a.ad_delivery,
-        a.attribution_setting,
+        MAX(a.campaign_type) as campaign_type,
+        MAX(a.batch) as batch,
+        MAX(a.ad_delivery) as ad_delivery,
+        MAX(a.attribution_setting) as attribution_setting,
         SUM(a.spend) as total_spend,
         SUM(CASE WHEN a.date >= date('now', '-3 days') THEN a.spend ELSE 0 END) as spend_3d,
         SUM(a.results) as total_results,
@@ -57,7 +57,7 @@ export async function GET(request: NextRequest) {
       FROM ad_spend a
       JOIN clients c ON c.id = a.client_id
       WHERE c.active = 1 ${clientWhere}
-      GROUP BY a.ad_name, c.name, c.short_code, c.fee_rate, a.campaign_type, a.batch, a.ad_delivery, a.attribution_setting
+      GROUP BY a.ad_name, c.name, c.short_code, c.fee_rate
       ORDER BY total_spend DESC
     `).all(...params) as (AdPerformance & { fee_rate: number; first_seen: string; last_seen: string; days_with_data: number; spend_24h: number; spend_prev_24h: number; results_24h: number; results_prev_24h: number })[];
 
@@ -191,7 +191,7 @@ export async function GET(request: NextRequest) {
         c.name as client_name,
         c.short_code,
         c.fee_rate,
-        a.campaign_type,
+        MAX(a.campaign_type) as campaign_type,
         SUM(a.spend) as total_spend,
         SUM(CASE WHEN a.date >= date('now', '-3 days') THEN a.spend ELSE 0 END) as spend_72h,
         SUM(a.results) as total_results,
@@ -199,7 +199,7 @@ export async function GET(request: NextRequest) {
       FROM ad_spend a
       JOIN clients c ON c.id = a.client_id
       WHERE c.active = 1 ${clientWhere}
-      GROUP BY a.ad_name, c.name, c.short_code, c.fee_rate, a.campaign_type
+      GROUP BY a.ad_name, c.name, c.short_code, c.fee_rate
     `).all(...params) as { ad_name: string; client_name: string; short_code: string; fee_rate: number; campaign_type: string; total_spend: number; spend_72h: number; total_results: number; results_72h: number }[];
 
     // Aggregate by client + campaign_type (= Meta campaign)
