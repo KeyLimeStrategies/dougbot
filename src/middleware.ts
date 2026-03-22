@@ -1,4 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
+import crypto from 'crypto';
+
+function verifySessionToken(token: string, dashPassword: string): boolean {
+  const secret = dashPassword + (process.env.META_APP_SECRET || 'kl-dashboard');
+  const expected = crypto.createHmac('sha256', secret).update('kl-session').digest('hex');
+  if (token.length !== expected.length) return false;
+  // Timing-safe comparison to prevent timing attacks
+  try {
+    return crypto.timingSafeEqual(Buffer.from(token), Buffer.from(expected));
+  } catch {
+    return false;
+  }
+}
 
 export function middleware(request: NextRequest) {
   const dashPassword = process.env.DASH_PASSWORD;
@@ -11,9 +24,9 @@ export function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  // Check for auth cookie
+  // Check for auth cookie (HMAC token, not raw password)
   const authCookie = request.cookies.get('kl_auth')?.value;
-  if (authCookie === dashPassword) {
+  if (authCookie && verifySessionToken(authCookie, dashPassword)) {
     return NextResponse.next();
   }
 
