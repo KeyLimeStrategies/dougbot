@@ -31,12 +31,26 @@ export default function DailyROI({ refreshKey }: { refreshKey: number }) {
   const [data, setData] = useState<{ rows: DailySummary[]; portfolioTotals: { date: string; total_spend: number; total_revenue: number; spend_with_fee: number; true_roas: number; profit: number; keylime_cut: number }[] }>({ rows: [], portfolioTotals: [] });
   const [selectedDate, setSelectedDate] = useState<string>('');
   const [days, setDays] = useState(1);
+  const [mode, setMode] = useState<'days' | 'wtd'>('days');
   const [roiText, setRoiText] = useState('');
   const [copied, setCopied] = useState(false);
   const [excludeRecurring, setExcludeRecurring] = useState(false);
 
   useEffect(() => {
-    const params = selectedDate ? `?date=${selectedDate}` : `?days=${days}`;
+    let params: string;
+    if (selectedDate) {
+      params = `?date=${selectedDate}`;
+    } else if (mode === 'wtd') {
+      const now = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+      const dayOfWeek = now.getDay(); // 0=Sun, 1=Mon, ...
+      const daysBack = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+      const monday = new Date(now);
+      monday.setDate(monday.getDate() - daysBack);
+      const startDate = monday.toISOString().split('T')[0];
+      params = `?start_date=${startDate}`;
+    } else {
+      params = `?days=${days}`;
+    }
     const recurParam = excludeRecurring ? '&exclude_recurring=true' : '';
     fetch(`/api/daily-roi${params}${recurParam}`)
       .then(r => r.json())
@@ -50,7 +64,7 @@ export default function DailyROI({ refreshKey }: { refreshKey: number }) {
         }
       })
       .catch(console.error);
-  }, [selectedDate, days, refreshKey, excludeRecurring]);
+  }, [selectedDate, days, mode, refreshKey, excludeRecurring]);
 
   const fetchRoiText = (date: string) => {
     fetch(`/api/roi-text?date=${date}`)
@@ -68,7 +82,7 @@ export default function DailyROI({ refreshKey }: { refreshKey: number }) {
   // Group rows by date
   const dates = [...new Set(data.rows.map(r => r.date))].sort().reverse();
   const portfolioMap = new Map(data.portfolioTotals.map(p => [p.date, p]));
-  const isMultiDay = days > 1 && !selectedDate && dates.length > 0;
+  const isMultiDay = (days > 1 || mode === 'wtd') && !selectedDate && dates.length > 0;
 
   // Compute range summary: aggregate all rows by client across all dates
   const rangeSummary = useMemo(() => {
@@ -163,13 +177,25 @@ export default function DailyROI({ refreshKey }: { refreshKey: number }) {
           </button>
         </div>
         <div className="flex gap-2">
-          {[1, 3, 7, 14, 30].map(d => (
+          <button
+            onClick={() => { setSelectedDate(''); setMode('days'); setDays(1); }}
+            className={`px-3 py-1 text-sm rounded ${mode === 'days' && days === 1 && !selectedDate ? 'bg-lime-500 text-black' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'}`}
+          >
+            Latest
+          </button>
+          <button
+            onClick={() => { setSelectedDate(''); setMode('wtd'); }}
+            className={`px-3 py-1 text-sm rounded ${mode === 'wtd' && !selectedDate ? 'bg-lime-500 text-black' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'}`}
+          >
+            WTD
+          </button>
+          {[3, 7, 14, 30].map(d => (
             <button
               key={d}
-              onClick={() => { setSelectedDate(''); setDays(d); }}
-              className={`px-3 py-1 text-sm rounded ${days === d && !selectedDate ? 'bg-lime-500 text-black' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'}`}
+              onClick={() => { setSelectedDate(''); setMode('days'); setDays(d); }}
+              className={`px-3 py-1 text-sm rounded ${mode === 'days' && days === d && !selectedDate ? 'bg-lime-500 text-black' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'}`}
             >
-              {d === 1 ? 'Latest' : `${d}d`}
+              {`${d}d`}
             </button>
           ))}
         </div>
@@ -181,7 +207,7 @@ export default function DailyROI({ refreshKey }: { refreshKey: number }) {
           {/* Range Quick Share */}
           <div className="bg-gray-800 rounded-lg p-4 mb-4 font-mono text-sm">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-gray-400 text-xs uppercase tracking-wide">{days}d Summary</span>
+              <span className="text-gray-400 text-xs uppercase tracking-wide">{mode === 'wtd' ? 'WTD' : `${days}d`} Summary</span>
               <button onClick={handleRangeCopy} className="flex items-center gap-1 text-xs text-gray-400 hover:text-white">
                 {rangeCopied ? <Check size={14} /> : <Copy size={14} />}
                 {rangeCopied ? 'Copied' : 'Copy'}
@@ -192,7 +218,7 @@ export default function DailyROI({ refreshKey }: { refreshKey: number }) {
 
           {/* Range Summary Table */}
           <div className="overflow-x-auto mb-2">
-            <div className="text-sm font-medium text-lime-400 mb-2">{days}d Combined ({rangeSummary.rangeLabel})</div>
+            <div className="text-sm font-medium text-lime-400 mb-2">{mode === 'wtd' ? 'WTD' : `${days}d`} Combined ({rangeSummary.rangeLabel})</div>
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-gray-500 text-xs uppercase border-b border-gray-800">

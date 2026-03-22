@@ -253,17 +253,17 @@ ${dailySummary}
 TOP ADS BY RECENT SPEND (individual ad performance):
 ${adSummary}
 
-Please analyze this data and provide a concise, actionable report:
+Please analyze this data and provide a focused, actionable report. The goal is to get every client's ROAS to 1.3x or higher (the breakeven for Keylime profitability with 10% fee + 25% profit share).
 
-1. **Campaign Health**: Evaluate each campaign's trajectory. Which campaigns are trending up or down over the past week? Are any campaigns consistently underperforming that we should consider pausing? Any campaigns showing momentum we should lean into?
+1. **Goal Gap Analysis**: For each client, what is their current trajectory? How far are they from 1.3x? What specific changes would close the gap? Prioritize clients that are closest to 1.3x (easiest wins) and clients losing the most money (biggest urgency).
 
-2. **Top Performers & Problem Ads**: Which specific ads stand out as winners or losers? Any new ads (under 72h) showing early promise or concern?
+2. **Immediate Budget Actions**: Concrete campaign-level budget changes to make RIGHT NOW. For each recommendation, include the campaign name, current 72h performance, and specific budget action (SCALE 20% / DROP 15% / PAUSE). Calculate the expected impact on portfolio ROAS if these changes are made.
 
-3. **Immediate Actions**: Concrete, specific actions to take RIGHT NOW. Include campaign-level budget recommendations (SCALE/DROP with amounts) and ad-level kills. Reference actual names and numbers.
+3. **Ad-Level Kills & Winners**: Which specific ads should be killed immediately (cite the kill rule they violate)? Which ads are carrying their campaigns and should be protected/duplicated?
 
-4. **Portfolio Insights**: Broader patterns across the portfolio. How is overall ROI trending? Any campaign types (Value vs CostCap vs ABX) performing systematically better? Client-level observations?
+4. **Portfolio Optimization Strategy**: What is the fastest path to getting the overall portfolio above 1.3x? Should budget be reallocated between clients? Between campaign types? What would you do with the next $100 of daily budget?
 
-Keep it direct and practical. No fluff. Use actual ad/campaign names and numbers throughout.`;
+Be direct. Use actual names and numbers. Every recommendation should include expected ROI impact.`;
 
     // Call Claude API
     const claudeRes = await fetch('https://api.anthropic.com/v1/messages', {

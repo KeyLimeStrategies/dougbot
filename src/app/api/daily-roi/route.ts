@@ -7,6 +7,7 @@ export async function GET(request: NextRequest) {
     const db = getDb();
     const searchParams = request.nextUrl.searchParams;
     const date = searchParams.get('date');
+    const startDate = searchParams.get('start_date');
     const days = parseInt(searchParams.get('days') || '7', 10);
     const excludeRecurring = searchParams.get('exclude_recurring') === 'true';
 
@@ -14,7 +15,7 @@ export async function GET(request: NextRequest) {
     const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
     const nDaysAgo = new Date(nowET);
     nDaysAgo.setDate(nDaysAgo.getDate() - days);
-    const nDaysAgoET = nDaysAgo.toISOString().split('T')[0];
+    const nDaysAgoET = startDate || nDaysAgo.toISOString().split('T')[0];
 
     let rows: DailySummary[];
 
