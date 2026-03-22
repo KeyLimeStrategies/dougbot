@@ -1,7 +1,8 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { ChevronDown, ChevronRight } from 'lucide-react';
+import { useState, useEffect, useMemo } from 'react';
+import { ChevronDown, ChevronRight, Search } from 'lucide-react';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 
 interface FormData {
   fundraising_page: string;
@@ -14,6 +15,7 @@ interface FormData {
   days_active: number;
   avg_per_day: number;
   is_ad: boolean;
+  channel: string;
   daily: { date: string; contributions: number; amount: number }[];
 }
 
@@ -22,31 +24,66 @@ interface ClientOption {
   name: string;
 }
 
+interface ChannelDailyEntry {
+  date: string;
+  [key: string]: string | number;
+}
+
+const CHANNEL_COLORS: Record<string, string> = {
+  ads: '#84cc16',
+  sms: '#22d3ee',
+  email: '#f472b6',
+  website: '#fb923c',
+  other: '#94a3b8',
+};
+
+const CHANNEL_LABELS: Record<string, string> = {
+  ads: 'Ads (fbig)',
+  sms: 'SMS',
+  email: 'Email',
+  website: 'Website',
+  other: 'Other',
+};
+
 export default function FormTracker({ refreshKey }: { refreshKey: number }) {
   const [forms, setForms] = useState<FormData[]>([]);
   const [clients, setClients] = useState<ClientOption[]>([]);
+  const [channelDaily, setChannelDaily] = useState<ChannelDailyEntry[]>([]);
   const [clientFilter, setClientFilter] = useState('all');
   const [days, setDays] = useState(30);
+  const [customStart, setCustomStart] = useState('');
+  const [customEnd, setCustomEnd] = useState('');
+  const [useCustomDates, setUseCustomDates] = useState(false);
   const [expandedForms, setExpandedForms] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [chartMetric, setChartMetric] = useState<'amount' | 'count'>('amount');
 
   useEffect(() => {
     setLoading(true);
     const params = new URLSearchParams();
-    params.set('days', String(days));
+
+    if (useCustomDates && customStart) {
+      params.set('start_date', customStart);
+      if (customEnd) params.set('end_date', customEnd);
+    } else {
+      params.set('days', String(days));
+    }
+
     if (clientFilter !== 'all') params.set('client', clientFilter);
     fetch(`/api/form-tracker?${params}`)
       .then(r => r.json())
       .then(data => {
         setForms(data.forms || []);
         setClients(data.clients || []);
+        setChannelDaily(data.channelDaily || []);
         setLoading(false);
       })
       .catch(err => {
         console.error(err);
         setLoading(false);
       });
-  }, [days, clientFilter, refreshKey]);
+  }, [days, clientFilter, refreshKey, useCustomDates, customStart, customEnd]);
 
   const toggleExpand = (key: string) => {
     setExpandedForms(prev => {
@@ -57,26 +94,63 @@ export default function FormTracker({ refreshKey }: { refreshKey: number }) {
     });
   };
 
-  const fmt = (n: number) => `$${n.toFixed(2)}`;
+  const fmt = (n: number) => `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
   const extractFormName = (url: string): string => {
     if (!url || url === '(none)') return '(no form)';
-    // Extract the last segment after /page/ or just return the URL
     const pageMatch = url.match(/\/page\/(.+?)(?:\?|$)/);
     if (pageMatch) return pageMatch[1];
-    // If it's already just a name (not a URL), return as-is
     if (!url.includes('/')) return url;
-    // Fallback: last path segment
     return url.split('/').pop() || url;
   };
 
-  const adForms = forms.filter(f => f.is_ad);
-  const organicForms = forms.filter(f => !f.is_ad);
+  // Filter forms by search query
+  const filteredForms = useMemo(() => {
+    if (!searchQuery.trim()) return forms;
+    const q = searchQuery.toLowerCase();
+    return forms.filter(f => {
+      const formName = extractFormName(f.fundraising_page).toLowerCase();
+      return formName.includes(q) ||
+        f.client_name.toLowerCase().includes(q) ||
+        f.channel.toLowerCase().includes(q) ||
+        f.fundraising_page.toLowerCase().includes(q);
+    });
+  }, [forms, searchQuery]);
+
+  const adForms = filteredForms.filter(f => f.is_ad);
+  const organicForms = filteredForms.filter(f => !f.is_ad);
 
   const totalAdAmount = adForms.reduce((s, f) => s + f.total_amount, 0);
   const totalOrganicAmount = organicForms.reduce((s, f) => s + f.total_amount, 0);
   const totalAdContributions = adForms.reduce((s, f) => s + f.contribution_count, 0);
   const totalOrganicContributions = organicForms.reduce((s, f) => s + f.contribution_count, 0);
+
+  // Detect which channels exist in the data
+  const activeChannels = useMemo(() => {
+    const channels = new Set<string>();
+    for (const entry of channelDaily) {
+      for (const key of Object.keys(entry)) {
+        if (key.endsWith('_amount')) {
+          channels.add(key.replace('_amount', ''));
+        }
+      }
+    }
+    return Array.from(channels).sort();
+  }, [channelDaily]);
+
+  // Channel summary totals
+  const channelSummary = useMemo(() => {
+    const totals = new Map<string, { amount: number; count: number }>();
+    for (const f of forms) {
+      if (!totals.has(f.channel)) totals.set(f.channel, { amount: 0, count: 0 });
+      const t = totals.get(f.channel)!;
+      t.amount += f.total_amount;
+      t.count += f.contribution_count;
+    }
+    return Array.from(totals.entries())
+      .map(([channel, data]) => ({ channel, ...data }))
+      .sort((a, b) => b.amount - a.amount);
+  }, [forms]);
 
   return (
     <div>
@@ -84,7 +158,7 @@ export default function FormTracker({ refreshKey }: { refreshKey: number }) {
         <h2 className="text-lg font-semibold text-white">Form Tracker</h2>
       </div>
 
-      {/* Filters */}
+      {/* Filters Row */}
       <div className="flex items-center gap-2 mb-4 flex-wrap">
         <select
           value={clientFilter}
@@ -97,29 +171,67 @@ export default function FormTracker({ refreshKey }: { refreshKey: number }) {
           ))}
         </select>
 
+        {/* Search bar */}
+        <div className="relative">
+          <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500" />
+          <input
+            type="text"
+            placeholder="Search forms..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="bg-gray-800 text-gray-300 text-sm rounded pl-8 pr-3 py-1.5 border border-gray-700 w-52 placeholder-gray-600 focus:border-lime-500 focus:outline-none"
+          />
+        </div>
+
         <div className="flex gap-2 ml-auto">
           {[7, 14, 30].map(d => (
             <button
               key={d}
-              onClick={() => setDays(d)}
-              className={`px-3 py-1 text-sm rounded ${days === d ? 'bg-lime-500 text-black' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'}`}
+              onClick={() => { setUseCustomDates(false); setDays(d); }}
+              className={`px-3 py-1 text-sm rounded ${!useCustomDates && days === d ? 'bg-lime-500 text-black' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'}`}
             >
               {d}d
             </button>
           ))}
           <button
-            onClick={() => setDays(0)}
-            className={`px-3 py-1 text-sm rounded ${days === 0 ? 'bg-lime-500 text-black' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'}`}
+            onClick={() => { setUseCustomDates(false); setDays(0); }}
+            className={`px-3 py-1 text-sm rounded ${!useCustomDates && days === 0 ? 'bg-lime-500 text-black' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'}`}
           >
             All
           </button>
         </div>
       </div>
 
+      {/* Date range picker */}
+      <div className="flex items-center gap-2 mb-4">
+        <span className="text-xs text-gray-500 uppercase">Date Range:</span>
+        <input
+          type="date"
+          value={customStart}
+          onChange={(e) => { setCustomStart(e.target.value); setUseCustomDates(true); }}
+          className="bg-gray-800 text-gray-300 text-xs rounded px-2 py-1 border border-gray-700 focus:border-lime-500 focus:outline-none"
+        />
+        <span className="text-gray-600">to</span>
+        <input
+          type="date"
+          value={customEnd}
+          onChange={(e) => { setCustomEnd(e.target.value); setUseCustomDates(true); }}
+          className="bg-gray-800 text-gray-300 text-xs rounded px-2 py-1 border border-gray-700 focus:border-lime-500 focus:outline-none"
+        />
+        {useCustomDates && (
+          <button
+            onClick={() => { setUseCustomDates(false); setCustomStart(''); setCustomEnd(''); }}
+            className="text-xs text-gray-500 hover:text-white px-2 py-1"
+          >
+            Clear
+          </button>
+        )}
+      </div>
+
       {/* Summary cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
         <div className="p-3 rounded-lg border border-gray-700 bg-gray-900 text-center">
-          <div className="text-2xl font-bold text-white">{forms.length}</div>
+          <div className="text-2xl font-bold text-white">{filteredForms.length}</div>
           <div className="text-xs text-gray-500 uppercase">Total Forms</div>
         </div>
         <div className="p-3 rounded-lg border border-gray-700 bg-gray-900 text-center">
@@ -136,25 +248,107 @@ export default function FormTracker({ refreshKey }: { refreshKey: number }) {
         </div>
       </div>
 
-      {/* Ad vs Organic breakdown */}
-      <div className="grid grid-cols-2 gap-3 mb-6">
-        <div className="p-3 rounded-lg border border-green-800/50 bg-green-900/10">
-          <div className="text-sm text-green-400 font-medium mb-1">Ad Forms (fbig)</div>
-          <div className="text-white font-mono">{fmt(totalAdAmount)}</div>
-          <div className="text-xs text-gray-500">{totalAdContributions} contributions</div>
-        </div>
-        <div className="p-3 rounded-lg border border-blue-800/50 bg-blue-900/10">
-          <div className="text-sm text-blue-400 font-medium mb-1">Organic / Other</div>
-          <div className="text-white font-mono">{fmt(totalOrganicAmount)}</div>
-          <div className="text-xs text-gray-500">{totalOrganicContributions} contributions</div>
-        </div>
+      {/* Channel breakdown cards */}
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-2 mb-6">
+        {channelSummary.map(ch => (
+          <div
+            key={ch.channel}
+            className="p-2.5 rounded-lg border bg-gray-900/50"
+            style={{ borderColor: `${CHANNEL_COLORS[ch.channel] || '#6b7280'}40` }}
+          >
+            <div className="flex items-center gap-1.5 mb-1">
+              <div className="w-2 h-2 rounded-full" style={{ backgroundColor: CHANNEL_COLORS[ch.channel] || '#6b7280' }} />
+              <span className="text-xs font-medium" style={{ color: CHANNEL_COLORS[ch.channel] || '#6b7280' }}>
+                {CHANNEL_LABELS[ch.channel] || ch.channel}
+              </span>
+            </div>
+            <div className="text-white font-mono text-sm">{fmt(ch.amount)}</div>
+            <div className="text-xs text-gray-500">{ch.count} contributions</div>
+          </div>
+        ))}
       </div>
 
+      {/* Channel Charts */}
+      {channelDaily.length > 0 && (
+        <div className="mb-6">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-medium text-gray-400 uppercase tracking-wider">Channel Trends</h3>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setChartMetric('amount')}
+                className={`px-3 py-1 text-xs rounded ${chartMetric === 'amount' ? 'bg-lime-500 text-black' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'}`}
+              >
+                Revenue
+              </button>
+              <button
+                onClick={() => setChartMetric('count')}
+                className={`px-3 py-1 text-xs rounded ${chartMetric === 'count' ? 'bg-lime-500 text-black' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'}`}
+              >
+                Contributions
+              </button>
+            </div>
+          </div>
+          <div className="bg-gray-900 rounded-lg border border-gray-800 p-4">
+            <ResponsiveContainer width="100%" height={280}>
+              <LineChart data={channelDaily}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
+                <XAxis
+                  dataKey="date"
+                  stroke="#6b7280"
+                  tick={{ fontSize: 11 }}
+                  tickFormatter={(d: string) => {
+                    const [, m, day] = d.split('-');
+                    return `${parseInt(m)}/${parseInt(day)}`;
+                  }}
+                />
+                <YAxis
+                  stroke="#6b7280"
+                  tick={{ fontSize: 11 }}
+                  tickFormatter={(v: number) => chartMetric === 'amount' ? `$${v}` : String(v)}
+                />
+                <Tooltip
+                  contentStyle={{ backgroundColor: '#1a1a2e', border: '1px solid #374151', borderRadius: '8px' }}
+                  labelStyle={{ color: '#9ca3af' }}
+                  labelFormatter={(d) => {
+                    const date = new Date(String(d) + 'T00:00:00');
+                    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+                  }}
+                  formatter={(value, name) => {
+                    const v = Number(value) || 0;
+                    const channel = String(name).replace(`_${chartMetric === 'amount' ? 'amount' : 'count'}`, '');
+                    const label = CHANNEL_LABELS[channel] || channel;
+                    return [chartMetric === 'amount' ? fmt(v) : v, label];
+                  }}
+                />
+                <Legend
+                  formatter={(value: string) => {
+                    const channel = value.replace(`_${chartMetric === 'amount' ? 'amount' : 'count'}`, '');
+                    return CHANNEL_LABELS[channel] || channel;
+                  }}
+                />
+                {activeChannels.map(channel => (
+                  <Line
+                    key={channel}
+                    type="monotone"
+                    dataKey={`${channel}_${chartMetric === 'amount' ? 'amount' : 'count'}`}
+                    stroke={CHANNEL_COLORS[channel] || '#6b7280'}
+                    strokeWidth={2}
+                    dot={false}
+                    connectNulls
+                  />
+                ))}
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      )}
+
+      {/* Forms Table */}
       {loading ? (
         <div className="text-gray-500 text-center py-12">Loading form data...</div>
-      ) : forms.length === 0 ? (
+      ) : filteredForms.length === 0 ? (
         <div className="text-gray-500 text-center py-12">
-          No form data found. Upload ActBlue CSV data to see contribution forms.
+          {searchQuery ? `No forms matching "${searchQuery}"` : 'No form data found. Upload ActBlue CSV data to see contribution forms.'}
         </div>
       ) : (
         <div className="overflow-x-auto">
@@ -163,7 +357,7 @@ export default function FormTracker({ refreshKey }: { refreshKey: number }) {
               <tr className="text-gray-500 text-xs uppercase border-b border-gray-800">
                 <th className="w-8 py-2 px-2"></th>
                 <th className="text-left py-2 px-2">Form</th>
-                <th className="text-left py-2 px-2">Type</th>
+                <th className="text-left py-2 px-2">Channel</th>
                 <th className="text-left py-2 px-2">Client</th>
                 <th className="text-right py-2 px-2">Contributions</th>
                 <th className="text-right py-2 px-2">Total Amount</th>
@@ -172,14 +366,15 @@ export default function FormTracker({ refreshKey }: { refreshKey: number }) {
               </tr>
             </thead>
             <tbody>
-              {forms.map(form => {
+              {filteredForms.map(form => {
                 const formKey = `${form.fundraising_page}::${form.short_code}`;
                 const isExpanded = expandedForms.has(formKey);
                 const formName = extractFormName(form.fundraising_page);
+                const channelColor = CHANNEL_COLORS[form.channel] || '#6b7280';
+                const channelLabel = CHANNEL_LABELS[form.channel] || form.channel;
                 return (
-                  <>
+                  <tbody key={formKey}>
                     <tr
-                      key={formKey}
                       className="border-b border-gray-800/50 hover:bg-gray-800/30 cursor-pointer"
                       onClick={() => toggleExpand(formKey)}
                     >
@@ -190,15 +385,16 @@ export default function FormTracker({ refreshKey }: { refreshKey: number }) {
                         {formName}
                       </td>
                       <td className="py-2 px-2">
-                        {form.is_ad ? (
-                          <span className="px-2 py-0.5 text-[10px] font-bold uppercase rounded bg-green-500/20 text-green-400 border border-green-500/30">
-                            AD
-                          </span>
-                        ) : (
-                          <span className="px-2 py-0.5 text-[10px] font-bold uppercase rounded bg-gray-600/20 text-gray-400 border border-gray-600/30">
-                            ORGANIC
-                          </span>
-                        )}
+                        <span
+                          className="px-2 py-0.5 text-[10px] font-bold uppercase rounded border"
+                          style={{
+                            backgroundColor: `${channelColor}20`,
+                            color: channelColor,
+                            borderColor: `${channelColor}40`,
+                          }}
+                        >
+                          {channelLabel}
+                        </span>
                       </td>
                       <td className="py-2 px-2 text-gray-400">{form.client_name}</td>
                       <td className="py-2 px-2 text-right text-gray-300">{form.contribution_count}</td>
@@ -211,7 +407,7 @@ export default function FormTracker({ refreshKey }: { refreshKey: number }) {
                       </td>
                     </tr>
                     {isExpanded && (
-                      <tr key={`${formKey}-daily`}>
+                      <tr>
                         <td colSpan={8} className="p-0">
                           <div className="bg-gray-900/80 border-t border-b border-gray-800/50 px-6 py-3">
                             <div className="text-xs text-gray-500 uppercase mb-2">Daily Breakdown</div>
@@ -243,7 +439,7 @@ export default function FormTracker({ refreshKey }: { refreshKey: number }) {
                         </td>
                       </tr>
                     )}
-                  </>
+                  </tbody>
                 );
               })}
             </tbody>

@@ -7,6 +7,8 @@ export async function GET(request: NextRequest) {
     const searchParams = request.nextUrl.searchParams;
     const days = searchParams.get('days');
     const client = searchParams.get('client') || 'all';
+    const startDate = searchParams.get('start_date');
+    const endDate = searchParams.get('end_date');
 
     // Use Eastern Time for date boundaries
     const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
@@ -14,7 +16,13 @@ export async function GET(request: NextRequest) {
     let dateFilter = '';
     const params: (string | number)[] = [];
 
-    if (days && days !== 'all' && days !== '0') {
+    if (startDate && endDate) {
+      dateFilter = 'AND r.date >= ? AND r.date <= ?';
+      params.push(startDate, endDate);
+    } else if (startDate) {
+      dateFilter = 'AND r.date >= ?';
+      params.push(startDate);
+    } else if (days && days !== 'all' && days !== '0') {
       const d = parseInt(days, 10) || 30;
       const cutoff = new Date(nowET);
       cutoff.setDate(cutoff.getDate() - d);
@@ -99,6 +107,42 @@ export async function GET(request: NextRequest) {
       });
     }
 
+    // Channel daily aggregation (sms, email, fbig, other) for charts
+    // Classify forms by channel based on name patterns
+    const channelDailyMap = new Map<string, Map<string, { contributions: number; amount: number }>>();
+
+    for (const row of dailyRows) {
+      const page = (row.fundraising_page || '').toLowerCase();
+      let channel = 'other';
+      if (page.includes('sms')) channel = 'sms';
+      else if (page.includes('email') || page.includes('eml')) channel = 'email';
+      else if (page.includes('fbig')) channel = 'ads';
+      else if (page.includes('web') || page.includes('site')) channel = 'website';
+
+      if (!channelDailyMap.has(row.date)) {
+        channelDailyMap.set(row.date, new Map());
+      }
+      const dayChannels = channelDailyMap.get(row.date)!;
+      if (!dayChannels.has(channel)) {
+        dayChannels.set(channel, { contributions: 0, amount: 0 });
+      }
+      const c = dayChannels.get(channel)!;
+      c.contributions += row.contribution_count;
+      c.amount += row.total_amount;
+    }
+
+    // Convert to array sorted by date
+    const channelDaily = Array.from(channelDailyMap.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([date, channels]) => {
+        const entry: Record<string, number | string> = { date };
+        for (const [channel, data] of channels) {
+          entry[`${channel}_amount`] = Math.round(data.amount * 100) / 100;
+          entry[`${channel}_count`] = data.contributions;
+        }
+        return entry;
+      });
+
     // Get list of clients for filter dropdown
     const clients = db.prepare(
       'SELECT short_code, name FROM clients WHERE active = 1 ORDER BY name'
@@ -107,7 +151,15 @@ export async function GET(request: NextRequest) {
     // Build response
     const forms = summaryRows.map(row => {
       const key = `${row.fundraising_page || '(none)'}::${row.short_code}`;
-      const isFbig = (row.fundraising_page || '').toLowerCase().includes('fbig');
+      const page = (row.fundraising_page || '').toLowerCase();
+      const isFbig = page.includes('fbig');
+
+      let channel = 'other';
+      if (page.includes('sms')) channel = 'sms';
+      else if (page.includes('email') || page.includes('eml')) channel = 'email';
+      else if (isFbig) channel = 'ads';
+      else if (page.includes('web') || page.includes('site')) channel = 'website';
+
       return {
         fundraising_page: row.fundraising_page || '(none)',
         client_name: row.client_name,
@@ -119,11 +171,12 @@ export async function GET(request: NextRequest) {
         days_active: row.days_active,
         avg_per_day: row.days_active > 0 ? row.total_amount / row.days_active : row.total_amount,
         is_ad: isFbig,
+        channel,
         daily: dailyMap.get(key) || [],
       };
     });
 
-    return NextResponse.json({ forms, clients });
+    return NextResponse.json({ forms, clients, channelDaily });
   } catch (error) {
     console.error('Form tracker error:', error);
     return NextResponse.json({ error: String(error) }, { status: 500 });
