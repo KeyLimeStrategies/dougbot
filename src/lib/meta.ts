@@ -350,15 +350,17 @@ function detectCampaignChanges(db: ReturnType<typeof getDb>, dateStart: string, 
       logChange(dateStart, ad.client_id, 'ad_toggled', `Ad likely turned off: ${ad.ad_name} (was active ${ad.active_days_prior}/7 days, now $0 for ${ad.zero_days_in_range} days)`);
     }
 
-    // 3. Detect significant budget changes (campaign-level daily spend changed >30% day-over-day)
+    // 3. Detect significant budget changes (campaign-level daily spend changed >15% day-over-day)
+    // Exclude today (partial data would cause false positives)
+    const todayET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' })).toISOString().split('T')[0];
     const dailyCampaignSpend = db.prepare(`
       SELECT a.date, a.client_id, a.campaign_type, SUM(a.spend) as daily_spend
       FROM ad_spend a
-      WHERE a.date >= date(?, '-1 day') AND a.date <= ?
+      WHERE a.date >= date(?, '-1 day') AND a.date <= ? AND a.date != ?
       GROUP BY a.date, a.client_id, a.campaign_type
       HAVING daily_spend > 10
       ORDER BY a.client_id, a.campaign_type, a.date
-    `).all(dateStart, dateEnd) as { date: string; client_id: number; campaign_type: string; daily_spend: number }[];
+    `).all(dateStart, dateEnd, todayET) as { date: string; client_id: number; campaign_type: string; daily_spend: number }[];
 
     // Group by client+campaign_type, compare consecutive days
     const campaignKey = (r: { client_id: number; campaign_type: string }) => `${r.client_id}:${r.campaign_type}`;
