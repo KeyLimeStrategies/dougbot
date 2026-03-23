@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { AlertTriangle, TrendingUp, TrendingDown, Minus, ChevronDown, ChevronRight, ArrowUp, ArrowDown, BarChart3 } from 'lucide-react';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Bar, BarChart } from 'recharts';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
 import type { AdPerformance as AdPerf, CampaignPerformance } from '@/lib/types';
 
 interface Summary {
@@ -309,7 +309,7 @@ function CampaignCard({
 }
 
 function AdChart({ adName }: { adName: string }) {
-  const [data, setData] = useState<{ date: string; spend: number; revenue: number; results: number }[]>([]);
+  const [data, setData] = useState<{ date: string; spend: number; revenue: number; roi: number; results: number }[]>([]);
   const [days, setDays] = useState(14);
   const [loading, setLoading] = useState(true);
 
@@ -327,7 +327,7 @@ function AdChart({ adName }: { adName: string }) {
   return (
     <div className="px-4 py-2 bg-gray-900/50">
       <div className="flex items-center gap-2 mb-2">
-        <span className="text-[10px] text-gray-500 uppercase">Daily Performance</span>
+        <span className="text-[10px] text-gray-500 uppercase">Daily ROI</span>
         {[7, 14, 30].map(d => (
           <button
             key={d}
@@ -339,19 +339,21 @@ function AdChart({ adName }: { adName: string }) {
         ))}
       </div>
       <ResponsiveContainer width="100%" height={120}>
-        <BarChart data={data}>
+        <LineChart data={data}>
           <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
           <XAxis dataKey="date" stroke="#4b5563" tick={{ fontSize: 9 }}
             tickFormatter={(d: string) => { const [,m,day] = d.split('-'); return `${parseInt(m)}/${parseInt(day)}`; }} />
-          <YAxis stroke="#4b5563" tick={{ fontSize: 9 }} tickFormatter={(v: number) => `$${v}`} />
+          <YAxis stroke="#4b5563" tick={{ fontSize: 9 }} domain={[0, 'auto']}
+            tickFormatter={(v: number) => `${v.toFixed(1)}x`} />
           <Tooltip
             contentStyle={{ backgroundColor: '#1a1a2e', border: '1px solid #374151', borderRadius: '6px', fontSize: '11px' }}
             labelFormatter={(d) => new Date(String(d) + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-            formatter={(v, name) => [`$${Number(v || 0).toFixed(2)}`, String(name) === 'spend' ? 'Spend' : 'Revenue']}
+            formatter={(v) => [`${Number(v || 0).toFixed(2)}x`, 'ROI']}
           />
-          <Bar dataKey="spend" fill="#ef444480" radius={[2,2,0,0]} />
-          <Bar dataKey="revenue" fill="#22c55e80" radius={[2,2,0,0]} />
-        </BarChart>
+          <ReferenceLine y={1.0} stroke="#ef4444" strokeDasharray="4 4" strokeWidth={1} />
+          <ReferenceLine y={1.3} stroke="#22c55e" strokeDasharray="4 4" strokeWidth={1} />
+          <Line type="monotone" dataKey="roi" stroke="#84cc16" strokeWidth={2} dot={{ r: 2 }} connectNulls />
+        </LineChart>
       </ResponsiveContainer>
     </div>
   );

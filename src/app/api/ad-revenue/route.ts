@@ -34,15 +34,29 @@ export async function GET(request: NextRequest) {
 
   const revenueMap = new Map(revenueData.map(r => [r.date, r]));
 
-  // Merge into daily series
-  const daily = spendData.map(d => ({
-    date: d.date,
-    spend: d.spend,
-    revenue: revenueMap.get(d.date)?.revenue || 0,
-    results: d.results,
-    contributions: revenueMap.get(d.date)?.contributions || 0,
-    frequency: d.frequency,
-  }));
+  // Get fee rate for this ad's client
+  const clientRow = db.prepare(`
+    SELECT c.fee_rate FROM ad_spend a
+    JOIN clients c ON c.id = a.client_id
+    WHERE a.ad_name = ? LIMIT 1
+  `).get(adName) as { fee_rate: number } | undefined;
+  const feeRate = clientRow?.fee_rate ?? 0.10;
+
+  // Merge into daily series with ROI
+  const daily = spendData.map(d => {
+    const rev = revenueMap.get(d.date)?.revenue || 0;
+    const spendWithFee = d.spend + (d.spend * feeRate);
+    const roi = spendWithFee > 0 ? rev / spendWithFee : 0;
+    return {
+      date: d.date,
+      spend: d.spend,
+      revenue: rev,
+      roi: Math.round(roi * 100) / 100,
+      results: d.results,
+      contributions: revenueMap.get(d.date)?.contributions || 0,
+      frequency: d.frequency,
+    };
+  });
 
   return NextResponse.json({ ad_name: adName, daily });
 }
