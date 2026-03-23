@@ -113,10 +113,13 @@ export default function HistoricalTrends({ refreshKey }: { refreshKey: number })
     }
   }
 
-  // Get unique change dates for reference lines
-  const changeDates = showChanges
-    ? [...new Set(changes.map(c => `${parseInt(c.date.split('-')[1])}/${parseInt(c.date.split('-')[2])}`))]
+  // Filter changes to only visible clients
+  const visibleChanges = showChanges
+    ? changes.filter(c => visibleClients.includes(c.short_code))
     : [];
+
+  // Get unique change dates for reference lines
+  const changeDates = [...new Set(visibleChanges.map(c => `${parseInt(c.date.split('-')[1])}/${parseInt(c.date.split('-')[2])}`))];
 
   const changeTypeLabels: Record<string, string> = {
     budget_change: 'Budget',
@@ -312,11 +315,11 @@ export default function HistoricalTrends({ refreshKey }: { refreshKey: number })
       )}
 
       {/* Recent Changes Log */}
-      {showChanges && changes.length > 0 && (
+      {showChanges && visibleChanges.length > 0 && (
         <div className="mt-4 bg-gray-800/50 rounded-lg border border-gray-700 p-3">
           <h4 className="text-xs text-purple-400 uppercase font-medium mb-2">Campaign Changes</h4>
           <div className="space-y-1 max-h-40 overflow-y-auto">
-            {changes.map((ch, i) => (
+            {visibleChanges.map((ch, i) => (
               <div key={i} className="flex items-center gap-2 text-xs">
                 <span className="text-gray-500 font-mono w-12 shrink-0">{`${parseInt(ch.date.split('-')[1])}/${parseInt(ch.date.split('-')[2])}`}</span>
                 <span className="px-1.5 py-0.5 rounded bg-purple-900/30 text-purple-300 text-[10px]">{changeTypeLabels[ch.change_type] || ch.change_type}</span>
