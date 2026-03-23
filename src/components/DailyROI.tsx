@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
-import { Copy, Check, RotateCw } from 'lucide-react';
+import { Copy, Check, RotateCw, Calendar } from 'lucide-react';
 import type { DailySummary } from '@/lib/types';
 
 function roasColor(roas: number): string {
@@ -31,15 +31,20 @@ export default function DailyROI({ refreshKey }: { refreshKey: number }) {
   const [data, setData] = useState<{ rows: DailySummary[]; portfolioTotals: { date: string; total_spend: number; total_revenue: number; spend_with_fee: number; true_roas: number; profit: number; keylime_cut: number }[] }>({ rows: [], portfolioTotals: [] });
   const [selectedDate, setSelectedDate] = useState<string>('');
   const [days, setDays] = useState(1);
-  const [mode, setMode] = useState<'days' | 'wtd'>('days');
+  const [mode, setMode] = useState<'days' | 'wtd' | 'range'>('days');
   const [roiText, setRoiText] = useState('');
   const [copied, setCopied] = useState(false);
   const [excludeRecurring, setExcludeRecurring] = useState(false);
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [rangeStart, setRangeStart] = useState('');
+  const [rangeEnd, setRangeEnd] = useState('');
 
   useEffect(() => {
     let params: string;
     if (selectedDate) {
       params = `?date=${selectedDate}`;
+    } else if (mode === 'range' && rangeStart && rangeEnd) {
+      params = `?start_date=${rangeStart}&end_date=${rangeEnd}`;
     } else if (mode === 'wtd') {
       const now = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
       const dayOfWeek = now.getDay(); // 0=Sun, 1=Mon, ...
@@ -64,7 +69,7 @@ export default function DailyROI({ refreshKey }: { refreshKey: number }) {
         }
       })
       .catch(console.error);
-  }, [selectedDate, days, mode, refreshKey, excludeRecurring]);
+  }, [selectedDate, days, mode, rangeStart, rangeEnd, refreshKey, excludeRecurring]);
 
   const fetchRoiText = (date: string) => {
     fetch(`/api/roi-text?date=${date}`)
@@ -82,7 +87,7 @@ export default function DailyROI({ refreshKey }: { refreshKey: number }) {
   // Group rows by date
   const dates = [...new Set(data.rows.map(r => r.date))].sort().reverse();
   const portfolioMap = new Map(data.portfolioTotals.map(p => [p.date, p]));
-  const isMultiDay = (days > 1 || mode === 'wtd') && !selectedDate && dates.length > 0;
+  const isMultiDay = (days > 1 || mode === 'wtd' || mode === 'range') && !selectedDate && dates.length > 0;
 
   // Compute range summary: aggregate all rows by client across all dates
   const rangeSummary = useMemo(() => {
@@ -176,15 +181,15 @@ export default function DailyROI({ refreshKey }: { refreshKey: number }) {
             {excludeRecurring ? 'Recurring OFF' : 'Recurring ON'}
           </button>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 items-center">
           <button
-            onClick={() => { setSelectedDate(''); setMode('days'); setDays(1); }}
+            onClick={() => { setSelectedDate(''); setMode('days'); setDays(1); setShowDatePicker(false); }}
             className={`px-3 py-1 text-sm rounded ${mode === 'days' && days === 1 && !selectedDate ? 'bg-lime-500 text-black' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'}`}
           >
             Latest
           </button>
           <button
-            onClick={() => { setSelectedDate(''); setMode('wtd'); }}
+            onClick={() => { setSelectedDate(''); setMode('wtd'); setShowDatePicker(false); }}
             className={`px-3 py-1 text-sm rounded ${mode === 'wtd' && !selectedDate ? 'bg-lime-500 text-black' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'}`}
           >
             WTD
@@ -192,14 +197,53 @@ export default function DailyROI({ refreshKey }: { refreshKey: number }) {
           {[3, 7, 14, 30].map(d => (
             <button
               key={d}
-              onClick={() => { setSelectedDate(''); setMode('days'); setDays(d); }}
+              onClick={() => { setSelectedDate(''); setMode('days'); setDays(d); setShowDatePicker(false); }}
               className={`px-3 py-1 text-sm rounded ${mode === 'days' && days === d && !selectedDate ? 'bg-lime-500 text-black' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'}`}
             >
               {`${d}d`}
             </button>
           ))}
+          <button
+            onClick={() => setShowDatePicker(!showDatePicker)}
+            className={`px-2 py-1 text-sm rounded ${mode === 'range' || showDatePicker ? 'bg-lime-500 text-black' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'}`}
+            title="Select date range"
+          >
+            <Calendar size={16} />
+          </button>
         </div>
       </div>
+
+      {/* Date Range Picker */}
+      {showDatePicker && (
+        <div className="flex items-center gap-3 mb-4 bg-gray-800 rounded-lg px-4 py-3">
+          <label className="text-sm text-gray-400">From</label>
+          <input
+            type="date"
+            value={rangeStart}
+            onChange={e => setRangeStart(e.target.value)}
+            className="bg-gray-900 border border-gray-700 rounded px-2 py-1 text-sm text-white focus:border-lime-500 focus:outline-none"
+          />
+          <label className="text-sm text-gray-400">To</label>
+          <input
+            type="date"
+            value={rangeEnd}
+            onChange={e => setRangeEnd(e.target.value)}
+            className="bg-gray-900 border border-gray-700 rounded px-2 py-1 text-sm text-white focus:border-lime-500 focus:outline-none"
+          />
+          <button
+            onClick={() => {
+              if (rangeStart && rangeEnd) {
+                setSelectedDate('');
+                setMode('range');
+              }
+            }}
+            disabled={!rangeStart || !rangeEnd}
+            className="px-3 py-1 text-sm rounded bg-lime-600 text-white hover:bg-lime-500 disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            Apply
+          </button>
+        </div>
+      )}
 
       {/* Range Summary (multi-day only) */}
       {rangeSummary && (
@@ -207,7 +251,7 @@ export default function DailyROI({ refreshKey }: { refreshKey: number }) {
           {/* Range Quick Share */}
           <div className="bg-gray-800 rounded-lg p-4 mb-4 font-mono text-sm">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-gray-400 text-xs uppercase tracking-wide">{mode === 'wtd' ? 'WTD' : `${days}d`} Summary</span>
+              <span className="text-gray-400 text-xs uppercase tracking-wide">{mode === 'wtd' ? 'WTD' : mode === 'range' ? 'Range' : `${days}d`} Summary</span>
               <button onClick={handleRangeCopy} className="flex items-center gap-1 text-xs text-gray-400 hover:text-white">
                 {rangeCopied ? <Check size={14} /> : <Copy size={14} />}
                 {rangeCopied ? 'Copied' : 'Copy'}
@@ -218,7 +262,7 @@ export default function DailyROI({ refreshKey }: { refreshKey: number }) {
 
           {/* Range Summary Table */}
           <div className="overflow-x-auto mb-2">
-            <div className="text-sm font-medium text-lime-400 mb-2">{mode === 'wtd' ? 'WTD' : `${days}d`} Combined ({rangeSummary.rangeLabel})</div>
+            <div className="text-sm font-medium text-lime-400 mb-2">{mode === 'wtd' ? 'WTD' : mode === 'range' ? 'Range' : `${days}d`} Combined ({rangeSummary.rangeLabel})</div>
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-gray-500 text-xs uppercase border-b border-gray-800">

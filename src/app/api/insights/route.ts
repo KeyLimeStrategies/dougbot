@@ -233,9 +233,14 @@ Portfolio avg CPP (72h): $${avgCpp.toFixed(2)}
 BUSINESS RULES:
 - True ROAS = ActBlue Revenue / (Meta Spend + Fee). Fee is typically 10% of spend (5% for Riker).
 - A "campaign" = client + campaign type (e.g., "Kinter Value" = all mk*.val ads). This is what we scale/drop budgets on.
-- Campaign types: val (Value optimization), cap (CostCap), num (Number of conversions), abx20 (ABX)
+- Campaign types and how they work:
+  * val (ValueOfConversions): Meta optimizes for highest value conversions. We set a daily budget. We can directly scale/drop budget.
+  * cap (CostCap): We tell Meta the max we're willing to pay per conversion (cost cap). Meta decides whether/how much to spend. We CANNOT force Meta to spend more on CostCap. To "scale" a CostCap, we can raise the cost cap or increase the daily budget ceiling, but Meta may still not spend it. To "drop" a CostCap, we lower the cost cap or budget.
+  * num (NumberOfConversions): Meta optimizes for maximum number of conversions. Budget directly controllable.
+  * abx20 (ABX): Similar to Value, budget directly controllable.
 - SCALE: increase campaign budget 20% when 72h ROI >= 1.3x or CPP 20%+ below portfolio avg
 - DROP: decrease campaign budget 15% when 72h ROI < 1.0x or CPP 50%+ above avg
+- For CostCap campaigns specifically: if ROI is strong but spend is low, recommend raising the cost cap slightly rather than budget. If ROI is poor, recommend lowering cost cap or pausing.
 - KILL (ad-level): individual ads with >$50 spent + 0 results, OR ROI < 0.5x on $50+ spend, OR frequency > 2.0
 - Ads under 72 hours old are in learning phase, do not recommend killing them
 - Revenue only counted from ActBlue "fbig" forms (ad-attributed donations)

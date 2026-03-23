@@ -8,6 +8,7 @@ export async function GET(request: NextRequest) {
     const searchParams = request.nextUrl.searchParams;
     const date = searchParams.get('date');
     const startDate = searchParams.get('start_date');
+    const endDate = searchParams.get('end_date');
     const days = parseInt(searchParams.get('days') || '7', 10);
     const excludeRecurring = searchParams.get('exclude_recurring') === 'true';
 
@@ -23,8 +24,10 @@ export async function GET(request: NextRequest) {
       // Recalculate on the fly using only first-time contributions
       const dateWhere = date
         ? `AND a.date = ?`
-        : `AND a.date >= ?`;
-      const queryParams = date ? [date] : [nDaysAgoET];
+        : endDate
+          ? `AND a.date >= ? AND a.date <= ?`
+          : `AND a.date >= ?`;
+      const queryParams = date ? [date] : endDate ? [nDaysAgoET, endDate] : [nDaysAgoET];
 
       rows = db.prepare(`
         SELECT
@@ -76,6 +79,17 @@ export async function GET(request: NextRequest) {
           ORDER BY ds.true_roas DESC
         `;
         params = [date];
+      } else if (endDate) {
+        query = `
+          SELECT ds.date, ds.client_id, c.name as client_name, c.short_code,
+                 ds.total_spend, ds.total_revenue, ds.spend_with_fee,
+                 ds.true_roas, ds.profit, ds.keylime_cut
+          FROM daily_summary ds
+          JOIN clients c ON c.id = ds.client_id
+          WHERE ds.date >= ? AND ds.date <= ? AND c.active = 1
+          ORDER BY ds.date DESC, ds.true_roas DESC
+        `;
+        params = [nDaysAgoET, endDate];
       } else {
         query = `
           SELECT ds.date, ds.client_id, c.name as client_name, c.short_code,
