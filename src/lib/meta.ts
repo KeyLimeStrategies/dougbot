@@ -357,6 +357,7 @@ function detectCampaignChanges(db: ReturnType<typeof getDb>, dateStart: string, 
       SELECT a.date, a.client_id, a.campaign_type, SUM(a.spend) as daily_spend
       FROM ad_spend a
       WHERE a.date >= date(?, '-1 day') AND a.date <= ? AND a.date != ?
+        AND a.campaign_type != 'cap'
       GROUP BY a.date, a.client_id, a.campaign_type
       HAVING daily_spend > 10
       ORDER BY a.client_id, a.campaign_type, a.date
