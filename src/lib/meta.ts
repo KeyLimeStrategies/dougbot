@@ -153,6 +153,9 @@ export async function syncMetaAds(dateStart: string, dateEnd: string): Promise<M
 
   insertMany();
 
+  // Auto-detect campaign changes by comparing current sync with previous data
+  detectCampaignChanges(db, dateStart, dateEnd);
+
   // Record upload
   db.prepare('INSERT INTO uploads (filename, upload_type, rows_processed) VALUES (?, ?, ?)').run(
     `meta_api_${dateStart}_${dateEnd}`, 'meta_api', adsProcessed
@@ -282,4 +285,96 @@ function recalculateSummaries() {
   });
 
   updateAll();
+}
+
+function detectCampaignChanges(db: ReturnType<typeof getDb>, dateStart: string, dateEnd: string) {
+  try {
+    const insertChange = db.prepare(
+      'INSERT INTO campaign_changes (date, client_id, change_type, description) VALUES (?, ?, ?, ?)'
+    );
+
+    // Prevent duplicate detections: get already-logged auto changes
+    const existingChanges = new Set(
+      (db.prepare(
+        "SELECT date || '|' || client_id || '|' || change_type || '|' || description as key FROM campaign_changes WHERE date >= ? AND date <= ?"
+      ).all(dateStart, dateEnd) as { key: string }[]).map(r => r.key)
+    );
+
+    const logChange = (date: string, clientId: number, type: string, desc: string) => {
+      const key = `${date}|${clientId}|${type}|${desc}`;
+      if (!existingChanges.has(key)) {
+        insertChange.run(date, clientId, type, desc);
+        existingChanges.add(key);
+      }
+    };
+
+    // 1. Detect new ads (first appearance in ad_spend)
+    const newAds = db.prepare(`
+      SELECT a.ad_name, a.client_id, MIN(a.date) as first_date, c.name as client_name
+      FROM ad_spend a
+      JOIN clients c ON c.id = a.client_id
+      WHERE a.date >= ? AND a.date <= ?
+      GROUP BY a.ad_name, a.client_id
+      HAVING first_date >= ? AND first_date = (
+        SELECT MIN(date) FROM ad_spend WHERE ad_name = a.ad_name
+      )
+    `).all(dateStart, dateEnd, dateStart) as { ad_name: string; client_id: number; first_date: string; client_name: string }[];
+
+    for (const ad of newAds) {
+      logChange(ad.first_date, ad.client_id, 'ad_launched', `New ad: ${ad.ad_name}`);
+    }
+
+    // 2. Detect ads that stopped spending (had spend in prior days but $0 in recent days)
+    const stoppedAds = db.prepare(`
+      SELECT a.ad_name, a.client_id, MAX(a.date) as last_spend_date, c.name as client_name
+      FROM ad_spend a
+      JOIN clients c ON c.id = a.client_id
+      WHERE a.spend > 0 AND a.date < ?
+      GROUP BY a.ad_name, a.client_id
+      HAVING last_spend_date >= date(?, '-3 days')
+        AND a.ad_name NOT IN (
+          SELECT ad_name FROM ad_spend WHERE date >= ? AND spend > 0
+        )
+    `).all(dateStart, dateStart, dateStart) as { ad_name: string; client_id: number; last_spend_date: string; client_name: string }[];
+
+    for (const ad of stoppedAds) {
+      logChange(dateStart, ad.client_id, 'ad_toggled', `Ad stopped spending: ${ad.ad_name}`);
+    }
+
+    // 3. Detect significant budget changes (campaign-level daily spend changed >30% day-over-day)
+    const dailyCampaignSpend = db.prepare(`
+      SELECT a.date, a.client_id, a.campaign_type, SUM(a.spend) as daily_spend
+      FROM ad_spend a
+      WHERE a.date >= date(?, '-1 day') AND a.date <= ?
+      GROUP BY a.date, a.client_id, a.campaign_type
+      HAVING daily_spend > 10
+      ORDER BY a.client_id, a.campaign_type, a.date
+    `).all(dateStart, dateEnd) as { date: string; client_id: number; campaign_type: string; daily_spend: number }[];
+
+    // Group by client+campaign_type, compare consecutive days
+    const campaignKey = (r: { client_id: number; campaign_type: string }) => `${r.client_id}:${r.campaign_type}`;
+    const prevDay = new Map<string, number>();
+
+    for (const row of dailyCampaignSpend) {
+      const key = campaignKey(row);
+      const prev = prevDay.get(key);
+      if (prev !== undefined && prev > 10) {
+        const changeRatio = row.daily_spend / prev;
+        if (changeRatio > 1.35) {
+          const client = db.prepare('SELECT name FROM clients WHERE id = ?').get(row.client_id) as { name: string } | undefined;
+          const typeLabel = row.campaign_type === 'val' ? 'Value' : row.campaign_type === 'cap' ? 'CostCap' : row.campaign_type === 'abx20' ? 'ABX' : row.campaign_type;
+          logChange(row.date, row.client_id, 'budget_change',
+            `${client?.name || ''} ${typeLabel} spend up ${Math.round((changeRatio - 1) * 100)}% ($${prev.toFixed(0)} -> $${row.daily_spend.toFixed(0)})`);
+        } else if (changeRatio < 0.65) {
+          const client = db.prepare('SELECT name FROM clients WHERE id = ?').get(row.client_id) as { name: string } | undefined;
+          const typeLabel = row.campaign_type === 'val' ? 'Value' : row.campaign_type === 'cap' ? 'CostCap' : row.campaign_type === 'abx20' ? 'ABX' : row.campaign_type;
+          logChange(row.date, row.client_id, 'budget_change',
+            `${client?.name || ''} ${typeLabel} spend down ${Math.round((1 - changeRatio) * 100)}% ($${prev.toFixed(0)} -> $${row.daily_spend.toFixed(0)})`);
+        }
+      }
+      prevDay.set(key, row.daily_spend);
+    }
+  } catch (err) {
+    console.error('Change detection error:', err);
+  }
 }
