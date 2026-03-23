@@ -360,12 +360,12 @@ function detectCampaignChanges(db: ReturnType<typeof getDb>, dateStart: string, 
       const prev = prevDay.get(key);
       if (prev !== undefined && prev > 10) {
         const changeRatio = row.daily_spend / prev;
-        if (changeRatio > 1.35) {
+        if (changeRatio > 1.15) {
           const client = db.prepare('SELECT name FROM clients WHERE id = ?').get(row.client_id) as { name: string } | undefined;
           const typeLabel = row.campaign_type === 'val' ? 'Value' : row.campaign_type === 'cap' ? 'CostCap' : row.campaign_type === 'abx20' ? 'ABX' : row.campaign_type;
           logChange(row.date, row.client_id, 'budget_change',
             `${client?.name || ''} ${typeLabel} spend up ${Math.round((changeRatio - 1) * 100)}% ($${prev.toFixed(0)} -> $${row.daily_spend.toFixed(0)})`);
-        } else if (changeRatio < 0.65) {
+        } else if (changeRatio < 0.85) {
           const client = db.prepare('SELECT name FROM clients WHERE id = ?').get(row.client_id) as { name: string } | undefined;
           const typeLabel = row.campaign_type === 'val' ? 'Value' : row.campaign_type === 'cap' ? 'CostCap' : row.campaign_type === 'abx20' ? 'ABX' : row.campaign_type;
           logChange(row.date, row.client_id, 'budget_change',
