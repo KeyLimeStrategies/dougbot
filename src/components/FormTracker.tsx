@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { ChevronDown, ChevronRight, Search } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 
@@ -405,7 +405,7 @@ export default function FormTracker({ refreshKey }: { refreshKey: number }) {
                 const channelColor = CHANNEL_COLORS[form.channel] || '#6b7280';
                 const channelLabel = CHANNEL_LABELS[form.channel] || form.channel;
                 return (
-                  <tbody key={formKey}>
+                  <React.Fragment key={formKey}>
                     <tr
                       className="border-b border-gray-800/50 hover:bg-gray-800/30 cursor-pointer"
                       onClick={() => toggleExpand(formKey)}
@@ -471,7 +471,7 @@ export default function FormTracker({ refreshKey }: { refreshKey: number }) {
                         </td>
                       </tr>
                     )}
-                  </tbody>
+                  </React.Fragment>
                 );
               })}
             </tbody>
