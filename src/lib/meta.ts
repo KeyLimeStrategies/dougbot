@@ -289,23 +289,18 @@ function recalculateSummaries() {
 
 function detectCampaignChanges(db: ReturnType<typeof getDb>, dateStart: string, dateEnd: string) {
   try {
-    const insertChange = db.prepare(
-      'INSERT INTO campaign_changes (date, client_id, change_type, description) VALUES (?, ?, ?, ?)'
-    );
+    // Purge auto-detected entries in this range (they'll be re-detected with current data)
+    // Manual entries are preserved
+    db.prepare(
+      "DELETE FROM campaign_changes WHERE date >= ? AND date <= ? AND source = 'auto'"
+    ).run(dateStart, dateEnd);
 
-    // Prevent duplicate detections: get already-logged auto changes
-    const existingChanges = new Set(
-      (db.prepare(
-        "SELECT date || '|' || client_id || '|' || change_type || '|' || description as key FROM campaign_changes WHERE date >= ? AND date <= ?"
-      ).all(dateStart, dateEnd) as { key: string }[]).map(r => r.key)
+    const insertChange = db.prepare(
+      "INSERT INTO campaign_changes (date, client_id, change_type, description, source) VALUES (?, ?, ?, ?, 'auto')"
     );
 
     const logChange = (date: string, clientId: number, type: string, desc: string) => {
-      const key = `${date}|${clientId}|${type}|${desc}`;
-      if (!existingChanges.has(key)) {
-        insertChange.run(date, clientId, type, desc);
-        existingChanges.add(key);
-      }
+      insertChange.run(date, clientId, type, desc);
     };
 
     // 1. Detect new ads (first appearance in ad_spend)

@@ -54,8 +54,8 @@ export async function POST(request: NextRequest) {
     }
 
     db.prepare(
-      'INSERT INTO campaign_changes (date, client_id, change_type, description) VALUES (?, ?, ?, ?)'
-    ).run(date, client.id, change_type, description || '');
+      'INSERT INTO campaign_changes (date, client_id, change_type, description, source) VALUES (?, ?, ?, ?, ?)'
+    ).run(date, client.id, change_type, description || '', 'manual');
 
     return NextResponse.json({ success: true });
   } catch (error) {

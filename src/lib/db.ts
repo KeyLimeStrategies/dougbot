@@ -139,9 +139,17 @@ function initializeSchema(db: Database.Database) {
       change_type TEXT NOT NULL,
       description TEXT,
       detected_at TEXT NOT NULL DEFAULT (datetime('now')),
+      source TEXT NOT NULL DEFAULT 'auto',
       FOREIGN KEY (client_id) REFERENCES clients(id)
     )
   `);
+
+  // Add source column if missing (existing DBs)
+  try {
+    db.exec(`ALTER TABLE campaign_changes ADD COLUMN source TEXT NOT NULL DEFAULT 'auto'`);
+  } catch {
+    // Column already exists
+  }
 
   // Seed clients
   const insertClient = db.prepare(
