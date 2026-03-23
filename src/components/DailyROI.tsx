@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
-import { Copy, Check, RotateCw, Calendar } from 'lucide-react';
+import { Copy, Check, RotateCw, Calendar, Clock } from 'lucide-react';
 import type { DailySummary } from '@/lib/types';
 
 function roasColor(roas: number): string {
@@ -38,6 +38,11 @@ export default function DailyROI({ refreshKey }: { refreshKey: number }) {
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [rangeStart, setRangeStart] = useState('');
   const [rangeEnd, setRangeEnd] = useState('');
+  const [lastSync, setLastSync] = useState<{ actblue: string | null; meta: string | null }>({ actblue: null, meta: null });
+
+  useEffect(() => {
+    fetch('/api/last-sync').then(r => r.json()).then(setLastSync).catch(() => {});
+  }, [refreshKey]);
 
   useEffect(() => {
     let params: string;
@@ -167,7 +172,16 @@ export default function DailyROI({ refreshKey }: { refreshKey: number }) {
     <div>
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-3">
-          <h2 className="text-lg font-semibold text-white">Daily ROI Summary</h2>
+          <div>
+            <h2 className="text-lg font-semibold text-white">Daily ROI Summary</h2>
+            {(lastSync.actblue || lastSync.meta) && (
+              <div className="flex items-center gap-3 text-[10px] text-gray-500 mt-0.5">
+                <Clock size={10} />
+                {lastSync.meta && <span>Meta: {new Date(lastSync.meta + 'Z').toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: 'America/New_York' })} ET</span>}
+                {lastSync.actblue && <span>AB: {new Date(lastSync.actblue + 'Z').toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: 'America/New_York' })} ET</span>}
+              </div>
+            )}
+          </div>
           <button
             onClick={() => setExcludeRecurring(!excludeRecurring)}
             className={`flex items-center gap-1.5 px-3 py-1 text-xs rounded-full border transition-colors ${

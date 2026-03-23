@@ -10,6 +10,7 @@ interface ClientCredStatus {
   entity_name: string;
   fee_rate: number;
   active: boolean;
+  is_ad_client: boolean;
   has_actblue: boolean;
   source: 'db' | 'env' | null;
 }
@@ -27,6 +28,15 @@ export default function Settings() {
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [editingFee, setEditingFee] = useState<string | null>(null);
   const [feeValue, setFeeValue] = useState('');
+
+  // New client form
+  const [showNewClient, setShowNewClient] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [newCode, setNewCode] = useState('');
+  const [newEntity, setNewEntity] = useState('');
+  const [newIsAd, setNewIsAd] = useState(true);
+  const [newFee, setNewFee] = useState('10');
+  const [savingClient, setSavingClient] = useState(false);
 
   const fetchClients = async () => {
     try {
@@ -107,6 +117,55 @@ export default function Settings() {
       }
     } catch {
       setMessage({ type: 'error', text: 'Failed to update fee rate' });
+    }
+  };
+
+  const handleCreateClient = async () => {
+    if (!newName || !newCode) {
+      setMessage({ type: 'error', text: 'Name and short code are required' });
+      return;
+    }
+    setSavingClient(true);
+    setMessage(null);
+    try {
+      const res = await fetch('/api/settings/credentials', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          short_code: newCode,
+          name: newName,
+          entity_name: newEntity || newName,
+          is_ad_client: newIsAd,
+          fee_rate: parseFloat(newFee) || 10,
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setMessage({ type: 'success', text: data.message });
+        setShowNewClient(false);
+        setNewName(''); setNewCode(''); setNewEntity(''); setNewIsAd(true); setNewFee('10');
+        fetchClients();
+      } else {
+        setMessage({ type: 'error', text: data.error });
+      }
+    } catch (err) {
+      setMessage({ type: 'error', text: String(err) });
+    }
+    setSavingClient(false);
+  };
+
+  const handleToggleAdClient = async (shortCode: string, isAd: boolean) => {
+    try {
+      const res = await fetch('/api/settings/credentials', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ short_code: shortCode, is_ad_client: isAd }),
+      });
+      const data = await res.json();
+      if (data.success) fetchClients();
+      else setMessage({ type: 'error', text: data.error });
+    } catch {
+      setMessage({ type: 'error', text: 'Failed to update' });
     }
   };
 
@@ -293,12 +352,117 @@ export default function Settings() {
       )}
 
       {!showForm && (
-        <button
-          onClick={() => { setShowForm(true); setSelectedClient(''); setMessage(null); }}
-          className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-gray-800 text-gray-300 hover:bg-gray-700 border border-gray-700 transition-colors"
-        >
-          <Plus size={16} /> Add ActBlue Credentials
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={() => { setShowForm(true); setSelectedClient(''); setMessage(null); }}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-gray-800 text-gray-300 hover:bg-gray-700 border border-gray-700 transition-colors"
+          >
+            <Plus size={16} /> Add ActBlue Credentials
+          </button>
+          <button
+            onClick={() => { setShowNewClient(true); setMessage(null); }}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-lime-600 text-white hover:bg-lime-500 transition-colors"
+          >
+            <Plus size={16} /> Add New Client
+          </button>
+        </div>
+      )}
+
+      {/* New Client Form */}
+      {showNewClient && (
+        <div className="bg-gray-800 border border-gray-600 rounded-lg p-5 mb-4 mt-4">
+          <h3 className="text-white font-medium mb-4 flex items-center gap-2">
+            <Plus size={16} /> Create New Client
+          </h3>
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-sm text-gray-400 mb-1">Client Name</label>
+                <input
+                  type="text"
+                  value={newName}
+                  onChange={e => setNewName(e.target.value)}
+                  placeholder="e.g. Jane Smith"
+                  className="w-full bg-gray-900 border border-gray-600 text-gray-300 rounded px-3 py-2 text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-sm text-gray-400 mb-1">Short Code (ad prefix)</label>
+                <input
+                  type="text"
+                  value={newCode}
+                  onChange={e => setNewCode(e.target.value.toLowerCase().replace(/[^a-z0-9]/g, ''))}
+                  placeholder="e.g. js"
+                  className="w-full bg-gray-900 border border-gray-600 text-gray-300 rounded px-3 py-2 text-sm font-mono"
+                />
+              </div>
+            </div>
+            <div>
+              <label className="block text-sm text-gray-400 mb-1">Entity Name (optional, for matching)</label>
+              <input
+                type="text"
+                value={newEntity}
+                onChange={e => setNewEntity(e.target.value)}
+                placeholder="e.g. Jane Smith for Congress"
+                className="w-full bg-gray-900 border border-gray-600 text-gray-300 rounded px-3 py-2 text-sm"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-sm text-gray-400 mb-1">Fee Rate (%)</label>
+                <input
+                  type="number"
+                  value={newFee}
+                  onChange={e => setNewFee(e.target.value)}
+                  className="w-full bg-gray-900 border border-gray-600 text-gray-300 rounded px-3 py-2 text-sm"
+                  min="0" max="100"
+                />
+              </div>
+              <div>
+                <label className="block text-sm text-gray-400 mb-1">Client Type</label>
+                <div className="flex gap-2 mt-1">
+                  <button
+                    onClick={() => setNewIsAd(true)}
+                    className={`flex-1 px-3 py-2 text-sm rounded border transition-colors ${
+                      newIsAd ? 'bg-lime-900/30 border-lime-700 text-lime-300' : 'bg-gray-900 border-gray-600 text-gray-400'
+                    }`}
+                  >
+                    Ad Client
+                  </button>
+                  <button
+                    onClick={() => setNewIsAd(false)}
+                    className={`flex-1 px-3 py-2 text-sm rounded border transition-colors ${
+                      !newIsAd ? 'bg-cyan-900/30 border-cyan-700 text-cyan-300' : 'bg-gray-900 border-gray-600 text-gray-400'
+                    }`}
+                  >
+                    Non-Ad
+                  </button>
+                </div>
+              </div>
+            </div>
+            <p className="text-xs text-gray-500">
+              {newIsAd
+                ? 'Ad clients appear in Daily ROI, Ad Performance, and Insights tabs.'
+                : 'Non-ad clients are tracked in Forms only (text, email, website donations).'}
+            </p>
+            <div className="flex gap-2 pt-1">
+              <button
+                onClick={handleCreateClient}
+                disabled={savingClient || !newName || !newCode}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-lime-500 text-black hover:bg-lime-400 disabled:opacity-50 transition-colors"
+              >
+                {savingClient ? <Loader2 className="animate-spin" size={14} /> : <CheckCircle size={14} />}
+                {savingClient ? 'Creating...' : 'Create Client'}
+              </button>
+              <button
+                onClick={() => { setShowNewClient(false); setMessage(null); }}
+                className="px-4 py-2 rounded-lg text-sm text-gray-400 hover:text-gray-300 transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Client Status (Active/Inactive) */}
@@ -316,13 +480,25 @@ export default function Settings() {
                 <div className="w-2 h-2 rounded-full bg-green-400" />
                 <span className="text-white font-medium">{c.name}</span>
                 <span className="text-gray-600 text-xs">({c.short_code})</span>
+                <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${c.is_ad_client ? 'bg-lime-900/30 text-lime-400' : 'bg-cyan-900/30 text-cyan-400'}`}>
+                  {c.is_ad_client ? 'ADS' : 'NON-AD'}
+                </span>
               </div>
-              <button
-                onClick={() => handleToggleActive(c.short_code, false)}
-                className="text-gray-500 hover:text-red-400 transition-colors text-xs font-medium"
-              >
-                Deactivate
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => handleToggleAdClient(c.short_code, !c.is_ad_client)}
+                  className="text-gray-500 hover:text-gray-300 transition-colors text-xs"
+                  title={c.is_ad_client ? 'Switch to non-ad' : 'Switch to ad client'}
+                >
+                  {c.is_ad_client ? 'Make Non-Ad' : 'Make Ad'}
+                </button>
+                <button
+                  onClick={() => handleToggleActive(c.short_code, false)}
+                  className="text-gray-500 hover:text-red-400 transition-colors text-xs font-medium"
+                >
+                  Deactivate
+                </button>
+              </div>
             </div>
           ))}
           {inactiveClients.map(c => (
@@ -347,7 +523,7 @@ export default function Settings() {
       <div className="mt-8 mb-6">
         <h2 className="text-xl font-semibold text-white mb-4">Management Fee Rates</h2>
         <p className="text-gray-500 text-sm mb-4">
-          Fee rate is applied to ad spend. KL Cut = fee + 25% of profit (when profitable).
+          KL Cut = admin fee (spend x rate) + 25% of true profit (revenue - spend - admin fee), when profitable.
         </p>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
           {clients.map(c => (

@@ -123,6 +123,26 @@ function initializeSchema(db: Database.Database) {
     // Column already exists
   }
 
+  // Add is_ad_client column (1 = runs ads, 0 = non-ad client like text/email only)
+  try {
+    db.exec(`ALTER TABLE clients ADD COLUMN is_ad_client INTEGER NOT NULL DEFAULT 1`);
+  } catch {
+    // Column already exists
+  }
+
+  // Campaign changes tracking table (budget changes, ad toggles, etc.)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS campaign_changes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      date TEXT NOT NULL,
+      client_id INTEGER NOT NULL,
+      change_type TEXT NOT NULL,
+      description TEXT,
+      detected_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (client_id) REFERENCES clients(id)
+    )
+  `);
+
   // Seed clients
   const insertClient = db.prepare(
     'INSERT OR IGNORE INTO clients (short_code, name, entity_name) VALUES (?, ?, ?)'
@@ -159,15 +179,13 @@ export function getClientFeeRate(clientId: number): number {
 
 export function getClientByAdName(adName: string): { id: number; short_code: string; name: string } | null {
   const db = getDb();
-  // Extract prefix from ad name (everything before the first digit-containing batch number)
-  // Format: {prefix}{batch}_{creative}_{variant}.{type}
-  // Examples: mk4_1_1.val, rcp27_5_1.cap, yonce5_6_1.abx20
-  const prefixes = ['effie', 'yonce', 'rcp', 'mk', 'ef', 'mc', 'br', 'ko', 'yen', 'gv', 'av'];
+  // Dynamically load all client short_codes, sorted longest-first to avoid prefix collisions
+  const clients = db.prepare('SELECT id, short_code, name FROM clients ORDER BY LENGTH(short_code) DESC').all() as { id: number; short_code: string; name: string }[];
 
   const lowerAd = adName.toLowerCase();
-  for (const prefix of prefixes) {
-    if (lowerAd.startsWith(prefix)) {
-      return db.prepare('SELECT id, short_code, name FROM clients WHERE short_code = ?').get(prefix) as { id: number; short_code: string; name: string } | undefined ?? null;
+  for (const client of clients) {
+    if (lowerAd.startsWith(client.short_code)) {
+      return client;
     }
   }
   return null;

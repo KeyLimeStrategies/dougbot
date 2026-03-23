@@ -1,7 +1,8 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, ReferenceLine } from 'recharts';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
+import { Plus, X } from 'lucide-react';
 import type { HistoricalPoint } from '@/lib/types';
 
 const COLORS = [
@@ -9,12 +10,29 @@ const COLORS = [
   '#34d399', '#fbbf24', '#60a5fa', '#f87171', '#e879f9', '#94a3b8',
 ];
 
+interface CampaignChange {
+  date: string;
+  change_type: string;
+  description: string;
+  client_name: string;
+  short_code: string;
+}
+
 export default function HistoricalTrends({ refreshKey }: { refreshKey: number }) {
   const [data, setData] = useState<HistoricalPoint[]>([]);
   const [days, setDays] = useState(30);
   const [metric, setMetric] = useState<'true_roas' | 'total_spend' | 'total_revenue'>('true_roas');
   const [hiddenClients, setHiddenClients] = useState<Set<string>>(new Set());
   const [excludeRecurring, setExcludeRecurring] = useState(false);
+  const [changes, setChanges] = useState<CampaignChange[]>([]);
+  const [showChanges, setShowChanges] = useState(true);
+
+  // Log change form
+  const [showLogForm, setShowLogForm] = useState(false);
+  const [logClient, setLogClient] = useState('');
+  const [logDate, setLogDate] = useState('');
+  const [logType, setLogType] = useState('budget_change');
+  const [logDesc, setLogDesc] = useState('');
 
   useEffect(() => {
     const recurParam = excludeRecurring ? '&exclude_recurring=true' : '';
@@ -23,6 +41,29 @@ export default function HistoricalTrends({ refreshKey }: { refreshKey: number })
       .then(d => setData(d.data || []))
       .catch(console.error);
   }, [days, refreshKey, excludeRecurring]);
+
+  useEffect(() => {
+    fetch(`/api/campaign-changes?days=${days}`)
+      .then(r => r.json())
+      .then(d => setChanges(d.changes || []))
+      .catch(() => {});
+  }, [days, refreshKey]);
+
+  const handleLogChange = async () => {
+    if (!logClient || !logDate || !logType) return;
+    const res = await fetch('/api/campaign-changes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ short_code: logClient, date: logDate, change_type: logType, description: logDesc }),
+    });
+    const data = await res.json();
+    if (data.success) {
+      setShowLogForm(false);
+      setLogDesc('');
+      // Refresh changes
+      fetch(`/api/campaign-changes?days=${days}`).then(r => r.json()).then(d => setChanges(d.changes || []));
+    }
+  };
 
   const toggleClient = (code: string) => {
     setHiddenClients(prev => {
@@ -39,7 +80,6 @@ export default function HistoricalTrends({ refreshKey }: { refreshKey: number })
     setHiddenClients(new Set(allClients.filter(c => c !== code)));
   };
 
-  // Transform data for recharts: pivot by date with client columns
   const clients = [...new Set(data.map(d => d.short_code))].sort();
   const visibleClients = clients.filter(c => !hiddenClients.has(c));
   const dateMap = new Map<string, Record<string, number>>();
@@ -56,6 +96,7 @@ export default function HistoricalTrends({ refreshKey }: { refreshKey: number })
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([date, values]) => ({
       dateLabel: `${parseInt(date.split('-')[1])}/${parseInt(date.split('-')[2])}`,
+      fullDate: date,
       ...values,
     }));
 
@@ -65,13 +106,26 @@ export default function HistoricalTrends({ refreshKey }: { refreshKey: number })
     total_revenue: 'Daily Revenue ($)',
   };
 
-  // Map short_code to client_name
   const clientNameMap = new Map<string, string>();
   for (const point of data) {
     if (!clientNameMap.has(point.short_code)) {
       clientNameMap.set(point.short_code, point.client_name);
     }
   }
+
+  // Get unique change dates for reference lines
+  const changeDates = showChanges
+    ? [...new Set(changes.map(c => `${parseInt(c.date.split('-')[1])}/${parseInt(c.date.split('-')[2])}`))]
+    : [];
+
+  const changeTypeLabels: Record<string, string> = {
+    budget_change: 'Budget',
+    ad_toggled: 'Ad Toggle',
+    campaign_paused: 'Paused',
+    campaign_launched: 'Launched',
+    creative_change: 'Creative',
+    other: 'Change',
+  };
 
   return (
     <div>
@@ -113,7 +167,53 @@ export default function HistoricalTrends({ refreshKey }: { refreshKey: number })
         >
           {excludeRecurring ? 'Recurring OFF' : 'Recurring ON'}
         </button>
+        <div className="w-px h-5 bg-gray-700 mx-1" />
+        <button
+          onClick={() => setShowChanges(!showChanges)}
+          className={`px-3 py-1 text-xs rounded-full border transition-colors ${
+            showChanges
+              ? 'bg-purple-900/30 border-purple-700 text-purple-300'
+              : 'bg-gray-800 border-gray-700 text-gray-400 hover:border-gray-600'
+          }`}
+        >
+          {showChanges ? 'Events ON' : 'Events OFF'}
+        </button>
+        <button
+          onClick={() => { setShowLogForm(!showLogForm); if (!logDate) setLogDate(new Date().toISOString().split('T')[0]); }}
+          className="px-2 py-1 text-xs rounded bg-gray-800 text-gray-400 hover:bg-gray-700 border border-gray-700"
+        >
+          <Plus size={12} className="inline" /> Log Change
+        </button>
       </div>
+
+      {/* Log Change Form */}
+      {showLogForm && (
+        <div className="bg-gray-800 border border-gray-600 rounded-lg p-4 mb-4">
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-sm text-white font-medium">Log Campaign Change</span>
+            <button onClick={() => setShowLogForm(false)} className="text-gray-500 hover:text-gray-300"><X size={14} /></button>
+          </div>
+          <div className="grid grid-cols-4 gap-2">
+            <select value={logClient} onChange={e => setLogClient(e.target.value)} className="bg-gray-900 border border-gray-600 text-sm text-gray-300 rounded px-2 py-1.5">
+              <option value="">Client...</option>
+              {clients.map(c => <option key={c} value={c}>{clientNameMap.get(c) || c}</option>)}
+            </select>
+            <input type="date" value={logDate} onChange={e => setLogDate(e.target.value)} className="bg-gray-900 border border-gray-600 text-sm text-gray-300 rounded px-2 py-1.5" />
+            <select value={logType} onChange={e => setLogType(e.target.value)} className="bg-gray-900 border border-gray-600 text-sm text-gray-300 rounded px-2 py-1.5">
+              <option value="budget_change">Budget Change</option>
+              <option value="ad_toggled">Ad Toggled On/Off</option>
+              <option value="campaign_paused">Campaign Paused</option>
+              <option value="campaign_launched">Campaign Launched</option>
+              <option value="creative_change">Creative Change</option>
+              <option value="other">Other</option>
+            </select>
+            <button onClick={handleLogChange} disabled={!logClient || !logDate}
+              className="bg-lime-600 text-white text-sm rounded px-3 py-1.5 hover:bg-lime-500 disabled:opacity-40">Save</button>
+          </div>
+          <input type="text" value={logDesc} onChange={e => setLogDesc(e.target.value)} placeholder="Description (optional, e.g. 'Increased Kinter ABX budget to $200/day')"
+            className="w-full mt-2 bg-gray-900 border border-gray-600 text-sm text-gray-300 rounded px-2 py-1.5" />
+        </div>
+      )}
 
       {/* Client toggles */}
       {clients.length > 0 && (
@@ -187,6 +287,10 @@ export default function HistoricalTrends({ refreshKey }: { refreshKey: number })
                   <ReferenceLine y={1.3} stroke="#22c55e" strokeDasharray="5 5" label={{ value: 'Target', position: 'left', fill: '#22c55e', fontSize: 11 }} />
                 </>
               )}
+              {/* Campaign change markers */}
+              {changeDates.map((dateLabel, i) => (
+                <ReferenceLine key={`change-${i}`} x={dateLabel} stroke="#a855f7" strokeDasharray="3 3" strokeWidth={1} />
+              ))}
               {visibleClients.map((client) => {
                 const i = clients.indexOf(client);
                 return (
@@ -204,6 +308,23 @@ export default function HistoricalTrends({ refreshKey }: { refreshKey: number })
               })}
             </LineChart>
           </ResponsiveContainer>
+        </div>
+      )}
+
+      {/* Recent Changes Log */}
+      {showChanges && changes.length > 0 && (
+        <div className="mt-4 bg-gray-800/50 rounded-lg border border-gray-700 p-3">
+          <h4 className="text-xs text-purple-400 uppercase font-medium mb-2">Campaign Changes</h4>
+          <div className="space-y-1 max-h-40 overflow-y-auto">
+            {changes.map((ch, i) => (
+              <div key={i} className="flex items-center gap-2 text-xs">
+                <span className="text-gray-500 font-mono w-12 shrink-0">{`${parseInt(ch.date.split('-')[1])}/${parseInt(ch.date.split('-')[2])}`}</span>
+                <span className="px-1.5 py-0.5 rounded bg-purple-900/30 text-purple-300 text-[10px]">{changeTypeLabels[ch.change_type] || ch.change_type}</span>
+                <span className="text-gray-300">{ch.client_name}</span>
+                {ch.description && <span className="text-gray-500">{ch.description}</span>}
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </div>

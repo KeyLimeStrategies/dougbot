@@ -58,6 +58,7 @@ export default function FormTracker({ refreshKey }: { refreshKey: number }) {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [chartMetric, setChartMetric] = useState<'amount' | 'count'>('amount');
+  const [hiddenChannels, setHiddenChannels] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     setLoading(true);
@@ -126,7 +127,7 @@ export default function FormTracker({ refreshKey }: { refreshKey: number }) {
   const totalOrganicContributions = organicForms.reduce((s, f) => s + f.contribution_count, 0);
 
   // Detect which channels exist in the data
-  const activeChannels = useMemo(() => {
+  const allChannels = useMemo(() => {
     const channels = new Set<string>();
     for (const entry of channelDaily) {
       for (const key of Object.keys(entry)) {
@@ -137,6 +138,17 @@ export default function FormTracker({ refreshKey }: { refreshKey: number }) {
     }
     return Array.from(channels).sort();
   }, [channelDaily]);
+
+  const activeChannels = allChannels.filter(ch => !hiddenChannels.has(ch));
+
+  const toggleChannel = (ch: string) => {
+    setHiddenChannels(prev => {
+      const next = new Set(prev);
+      if (next.has(ch)) next.delete(ch);
+      else next.add(ch);
+      return next;
+    });
+  };
 
   // Channel summary totals
   const channelSummary = useMemo(() => {
@@ -287,6 +299,26 @@ export default function FormTracker({ refreshKey }: { refreshKey: number }) {
                 Contributions
               </button>
             </div>
+          </div>
+          {/* Channel toggles */}
+          <div className="flex items-center gap-1.5 mb-3 flex-wrap">
+            {allChannels.map(channel => {
+              const isVisible = !hiddenChannels.has(channel);
+              const color = CHANNEL_COLORS[channel] || '#6b7280';
+              const label = CHANNEL_LABELS[channel] || channel;
+              return (
+                <button
+                  key={channel}
+                  onClick={() => toggleChannel(channel)}
+                  className={`px-2.5 py-1 text-xs rounded border transition-colors ${
+                    isVisible ? 'border-opacity-60' : 'bg-gray-800/30 border-gray-800 text-gray-600 line-through'
+                  }`}
+                  style={isVisible ? { backgroundColor: `${color}20`, borderColor: color, color } : undefined}
+                >
+                  {label}
+                </button>
+              );
+            })}
           </div>
           <div className="bg-gray-900 rounded-lg border border-gray-800 p-4">
             <ResponsiveContainer width="100%" height={280}>

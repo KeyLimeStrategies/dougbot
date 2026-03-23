@@ -1,7 +1,8 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { AlertTriangle, TrendingUp, TrendingDown, Minus, ChevronDown, ChevronRight, ArrowUp, ArrowDown } from 'lucide-react';
+import { AlertTriangle, TrendingUp, TrendingDown, Minus, ChevronDown, ChevronRight, ArrowUp, ArrowDown, BarChart3 } from 'lucide-react';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Bar, BarChart } from 'recharts';
 import type { AdPerformance as AdPerf, CampaignPerformance } from '@/lib/types';
 
 interface Summary {
@@ -302,73 +303,137 @@ function CampaignCard({
       )}
 
       {/* Expanded: show individual ads */}
-      {expanded && (() => {
-        const adSet = new Set(campaign.ads);
-        const campaignAds = ads.filter(a => adSet.has(a.ad_name)).sort((a, b) => b.total_spend - a.total_spend);
-        return (
-          <div className="border-t border-gray-800/50 px-4 py-2">
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="text-gray-600 uppercase">
-                  <th className="text-left py-1 px-1">Ad</th>
-                  <th className="text-right py-1 px-1">Spend</th>
-                  <th className="text-right py-1 px-1">AB Rev</th>
-                  <th className="text-right py-1 px-1">ROI</th>
-                  <th className="text-right py-1 px-1">Results</th>
-                  <th className="text-right py-1 px-1">CPP</th>
-                  <th className="text-right py-1 px-1">Freq</th>
-                  <th className="text-center py-1 px-1">24h</th>
-                  <th className="text-left py-1 px-1">Launched</th>
-                  <th className="text-left py-1 px-1">Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {campaignAds.map(ad => (
-                  <tr key={ad.ad_name} className={`border-t border-gray-800/30 ${ad.recommendation === 'KILL' ? 'text-red-400/80' : ''}`}>
-                    <td className="py-1 px-1 text-gray-300 font-mono">
-                      {ad.ad_name}
-                    </td>
-                    <td className="py-1 px-1 text-right text-gray-300">{fmt(ad.total_spend)}</td>
-                    <td className={`py-1 px-1 text-right font-mono ${ad.actblue_revenue > 0 ? 'text-green-400' : 'text-gray-600'}`}>
-                      {ad.actblue_revenue > 0 ? fmt(ad.actblue_revenue) : '$0'}
-                    </td>
-                    <td className={`py-1 px-1 text-right font-mono font-medium ${ad.roi >= 1.3 ? 'text-green-400' : ad.roi > 0 && ad.roi < 1.0 ? 'text-red-400' : ad.roi >= 1.0 ? 'text-yellow-400' : 'text-gray-600'}`}>
-                      {ad.roi > 0 ? `${ad.roi.toFixed(2)}x` : '-'}
-                    </td>
-                    <td className="py-1 px-1 text-right text-gray-300">{ad.total_results}</td>
-                    <td className={`py-1 px-1 text-right font-mono ${ad.cpp > 40 ? 'text-red-400' : ad.cpp < 25 && ad.cpp > 0 ? 'text-green-400' : 'text-gray-300'}`}>
-                      {ad.cpp > 0 ? fmt(ad.cpp) : '-'}
-                    </td>
-                    <td className={`py-1 px-1 text-right ${ad.frequency > 2.0 ? 'text-red-400' : 'text-gray-400'}`}>
-                      {ad.frequency.toFixed(2)}
-                    </td>
-                    <td className="py-1 px-1 text-center">
-                      {ad.trend === 'up' && <ArrowUp size={14} className="text-green-400 inline" />}
-                      {ad.trend === 'down' && <ArrowDown size={14} className="text-red-400 inline" />}
-                      {ad.trend === 'flat' && <Minus size={12} className="text-gray-600 inline" />}
-                      {ad.trend === 'new' && (
-                        <span className="px-1.5 py-0.5 text-[10px] font-bold uppercase rounded bg-blue-500/20 text-blue-400 border border-blue-500/30">
-                          NEW
-                        </span>
-                      )}
-                    </td>
-                    <td className="py-1 px-1 text-gray-500 whitespace-nowrap">
-                      {ad.first_seen ? new Date(ad.first_seen + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '-'}
-                    </td>
-                    <td className="py-1 px-1">
-                      {ad.recommendation === 'KILL' && (
-                        <span className="flex items-center gap-1 text-red-400">
-                          <AlertTriangle size={10} /> KILL
-                        </span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        );
-      })()}
+      {expanded && <CampaignAdsTable ads={ads} campaign={campaign} fmt={fmt} />}
     </div>
+  );
+}
+
+function AdChart({ adName }: { adName: string }) {
+  const [data, setData] = useState<{ date: string; spend: number; revenue: number; results: number }[]>([]);
+  const [days, setDays] = useState(14);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    setLoading(true);
+    fetch(`/api/ad-revenue?ad_name=${encodeURIComponent(adName)}&days=${days}`)
+      .then(r => r.json())
+      .then(d => { setData(d.daily || []); setLoading(false); })
+      .catch(() => setLoading(false));
+  }, [adName, days]);
+
+  if (loading) return <div className="text-gray-500 text-xs py-2 pl-4">Loading chart...</div>;
+  if (data.length === 0) return <div className="text-gray-600 text-xs py-2 pl-4">No daily data available</div>;
+
+  return (
+    <div className="px-4 py-2 bg-gray-900/50">
+      <div className="flex items-center gap-2 mb-2">
+        <span className="text-[10px] text-gray-500 uppercase">Daily Performance</span>
+        {[7, 14, 30].map(d => (
+          <button
+            key={d}
+            onClick={() => setDays(d)}
+            className={`px-2 py-0.5 text-[10px] rounded ${days === d ? 'bg-lime-500 text-black' : 'bg-gray-800 text-gray-500 hover:bg-gray-700'}`}
+          >
+            {d}d
+          </button>
+        ))}
+      </div>
+      <ResponsiveContainer width="100%" height={120}>
+        <BarChart data={data}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
+          <XAxis dataKey="date" stroke="#4b5563" tick={{ fontSize: 9 }}
+            tickFormatter={(d: string) => { const [,m,day] = d.split('-'); return `${parseInt(m)}/${parseInt(day)}`; }} />
+          <YAxis stroke="#4b5563" tick={{ fontSize: 9 }} tickFormatter={(v: number) => `$${v}`} />
+          <Tooltip
+            contentStyle={{ backgroundColor: '#1a1a2e', border: '1px solid #374151', borderRadius: '6px', fontSize: '11px' }}
+            labelFormatter={(d) => new Date(String(d) + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+            formatter={(v, name) => [`$${Number(v || 0).toFixed(2)}`, String(name) === 'spend' ? 'Spend' : 'Revenue']}
+          />
+          <Bar dataKey="spend" fill="#ef444480" radius={[2,2,0,0]} />
+          <Bar dataKey="revenue" fill="#22c55e80" radius={[2,2,0,0]} />
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+function CampaignAdsTable({ ads, campaign, fmt }: { ads: AdPerf[]; campaign: CampaignPerformance; fmt: (n: number) => string }) {
+  const [expandedAd, setExpandedAd] = useState<string | null>(null);
+
+  const adSet = new Set(campaign.ads);
+  const campaignAds = ads.filter(a => adSet.has(a.ad_name)).sort((a, b) => b.total_spend - a.total_spend);
+
+  return (
+    <div className="border-t border-gray-800/50 px-4 py-2">
+      <table className="w-full text-xs">
+        <thead>
+          <tr className="text-gray-600 uppercase">
+            <th className="w-5 py-1 px-1"></th>
+            <th className="text-left py-1 px-1">Ad</th>
+            <th className="text-right py-1 px-1">Spend</th>
+            <th className="text-right py-1 px-1">AB Rev</th>
+            <th className="text-right py-1 px-1">ROI</th>
+            <th className="text-right py-1 px-1">Results</th>
+            <th className="text-right py-1 px-1">CPP</th>
+            <th className="text-right py-1 px-1">Freq</th>
+            <th className="text-center py-1 px-1">24h</th>
+            <th className="text-left py-1 px-1">Launched</th>
+            <th className="text-left py-1 px-1">Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {campaignAds.map(ad => (
+            <AdRow key={ad.ad_name} ad={ad} fmt={fmt} expanded={expandedAd === ad.ad_name}
+              onToggle={() => setExpandedAd(expandedAd === ad.ad_name ? null : ad.ad_name)} />
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function AdRow({ ad, fmt, expanded, onToggle }: { ad: AdPerf; fmt: (n: number) => string; expanded: boolean; onToggle: () => void }) {
+  return (
+    <>
+      <tr className={`border-t border-gray-800/30 ${ad.recommendation === 'KILL' ? 'text-red-400/80' : ''} cursor-pointer hover:bg-gray-800/30`} onClick={onToggle}>
+        <td className="py-1 px-1 text-gray-500">
+          <BarChart3 size={10} className={expanded ? 'text-lime-400' : ''} />
+        </td>
+        <td className="py-1 px-1 text-gray-300 font-mono">{ad.ad_name}</td>
+        <td className="py-1 px-1 text-right text-gray-300">{fmt(ad.total_spend)}</td>
+        <td className={`py-1 px-1 text-right font-mono ${ad.actblue_revenue > 0 ? 'text-green-400' : 'text-gray-600'}`}>
+          {ad.actblue_revenue > 0 ? fmt(ad.actblue_revenue) : '$0'}
+        </td>
+        <td className={`py-1 px-1 text-right font-mono font-medium ${ad.roi >= 1.3 ? 'text-green-400' : ad.roi > 0 && ad.roi < 1.0 ? 'text-red-400' : ad.roi >= 1.0 ? 'text-yellow-400' : 'text-gray-600'}`}>
+          {ad.roi > 0 ? `${ad.roi.toFixed(2)}x` : '-'}
+        </td>
+        <td className="py-1 px-1 text-right text-gray-300">{ad.total_results}</td>
+        <td className={`py-1 px-1 text-right font-mono ${ad.cpp > 40 ? 'text-red-400' : ad.cpp < 25 && ad.cpp > 0 ? 'text-green-400' : 'text-gray-300'}`}>
+          {ad.cpp > 0 ? fmt(ad.cpp) : '-'}
+        </td>
+        <td className={`py-1 px-1 text-right ${ad.frequency > 2.0 ? 'text-red-400' : 'text-gray-400'}`}>
+          {ad.frequency.toFixed(2)}
+        </td>
+        <td className="py-1 px-1 text-center">
+          {ad.trend === 'up' && <ArrowUp size={14} className="text-green-400 inline" />}
+          {ad.trend === 'down' && <ArrowDown size={14} className="text-red-400 inline" />}
+          {ad.trend === 'flat' && <Minus size={12} className="text-gray-600 inline" />}
+          {ad.trend === 'new' && (
+            <span className="px-1.5 py-0.5 text-[10px] font-bold uppercase rounded bg-blue-500/20 text-blue-400 border border-blue-500/30">NEW</span>
+          )}
+        </td>
+        <td className="py-1 px-1 text-gray-500 whitespace-nowrap">
+          {ad.first_seen ? new Date(ad.first_seen + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '-'}
+        </td>
+        <td className="py-1 px-1">
+          {ad.recommendation === 'KILL' && (
+            <span className="flex items-center gap-1 text-red-400"><AlertTriangle size={10} /> KILL</span>
+          )}
+        </td>
+      </tr>
+      {expanded && (
+        <tr><td colSpan={11}><AdChart adName={ad.ad_name} /></td></tr>
+      )}
+    </>
   );
 }
