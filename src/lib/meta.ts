@@ -324,21 +324,30 @@ function detectCampaignChanges(db: ReturnType<typeof getDb>, dateStart: string, 
       logChange(ad.first_date, ad.client_id, 'ad_launched', `New ad: ${ad.ad_name}`);
     }
 
-    // 2. Detect ads that stopped spending (had spend in prior days but $0 in recent days)
-    const stoppedAds = db.prepare(`
-      SELECT a.ad_name, a.client_id, MAX(a.date) as last_spend_date, c.name as client_name
+    // 2. Detect ads likely toggled off: had spend on 3+ of the last 7 days,
+    //    but zero spend for the last 2+ consecutive days in the sync range.
+    //    This filters out organic $0 days (CostCap not delivering, etc.)
+    const likelyToggled = db.prepare(`
+      SELECT a.ad_name, a.client_id, c.name as client_name,
+        MAX(a.date) as last_spend_date,
+        COUNT(CASE WHEN a.spend > 0 AND a.date >= date(?, '-7 days') AND a.date < ? THEN 1 END) as active_days_prior,
+        COUNT(CASE WHEN a.spend = 0 AND a.date >= ? THEN 1 END) as zero_days_in_range,
+        COUNT(CASE WHEN a.date >= ? THEN 1 END) as total_days_in_range
       FROM ad_spend a
       JOIN clients c ON c.id = a.client_id
-      WHERE a.spend > 0 AND a.date < ?
+      WHERE a.date >= date(?, '-7 days') AND a.date <= ?
       GROUP BY a.ad_name, a.client_id
-      HAVING last_spend_date >= date(?, '-3 days')
-        AND a.ad_name NOT IN (
-          SELECT ad_name FROM ad_spend WHERE date >= ? AND spend > 0
-        )
-    `).all(dateStart, dateStart, dateStart) as { ad_name: string; client_id: number; last_spend_date: string; client_name: string }[];
+      HAVING active_days_prior >= 3
+        AND total_days_in_range >= 2
+        AND zero_days_in_range = total_days_in_range
+    `).all(dateStart, dateStart, dateStart, dateStart, dateStart, dateEnd) as {
+      ad_name: string; client_id: number; client_name: string;
+      last_spend_date: string; active_days_prior: number;
+      zero_days_in_range: number; total_days_in_range: number;
+    }[];
 
-    for (const ad of stoppedAds) {
-      logChange(dateStart, ad.client_id, 'ad_toggled', `Ad stopped spending: ${ad.ad_name}`);
+    for (const ad of likelyToggled) {
+      logChange(dateStart, ad.client_id, 'ad_toggled', `Ad likely turned off: ${ad.ad_name} (was active ${ad.active_days_prior}/7 days, now $0 for ${ad.zero_days_in_range} days)`);
     }
 
     // 3. Detect significant budget changes (campaign-level daily spend changed >30% day-over-day)
