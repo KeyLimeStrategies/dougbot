@@ -123,6 +123,8 @@ export default function HistoricalTrends({ refreshKey }: { refreshKey: number })
 
   const changeTypeLabels: Record<string, string> = {
     budget_change: 'Budget',
+    status_change: 'Status',
+    ad_launched: 'New Ad',
     ad_toggled: 'Ad Toggle',
     campaign_paused: 'Paused',
     campaign_launched: 'Launched',

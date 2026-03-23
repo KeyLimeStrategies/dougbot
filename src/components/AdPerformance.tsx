@@ -7,6 +7,7 @@ import type { AdPerformance as AdPerf, CampaignPerformance } from '@/lib/types';
 
 interface Summary {
   total_ads: number;
+  paused_ads?: number;
   total_campaigns: number;
   kill_count: number;
   scale_count: number;
@@ -30,6 +31,7 @@ export default function AdPerformance({ refreshKey }: { refreshKey: number }) {
   const [checkedAds, setCheckedAds] = useState<Set<string>>(new Set());
   const [activeTab, setActiveTab] = useState<'campaigns' | 'kill'>('campaigns');
   const [showHold, setShowHold] = useState(false);
+  const [hidePaused, setHidePaused] = useState(true);
 
   useEffect(() => {
     const params = new URLSearchParams();
@@ -41,7 +43,8 @@ export default function AdPerformance({ refreshKey }: { refreshKey: number }) {
   }, [clientFilter, refreshKey]);
 
   const clients = [...new Set(data.ads.map(a => a.short_code))].sort();
-  const killAds = data.ads.filter(a => a.recommendation === 'KILL');
+  const activeAds = hidePaused ? data.ads.filter(a => a.ad_delivery === 'active' || a.ad_delivery === '') : data.ads;
+  const killAds = activeAds.filter(a => a.recommendation === 'KILL');
   const scaleCampaigns = data.campaigns.filter(c => c.recommendation === 'SCALE');
   const dropCampaigns = data.campaigns.filter(c => c.recommendation === 'DROP');
   const holdCampaigns = data.campaigns.filter(c => c.recommendation === 'HOLD');
@@ -102,6 +105,19 @@ export default function AdPerformance({ refreshKey }: { refreshKey: number }) {
           ))}
         </select>
 
+        <button
+          onClick={() => setHidePaused(!hidePaused)}
+          className={`flex items-center gap-1.5 px-3 py-1 text-xs rounded-full border transition-colors ${
+            hidePaused
+              ? 'bg-gray-800 border-gray-700 text-gray-400 hover:border-gray-600'
+              : 'bg-purple-900/30 border-purple-700 text-purple-300'
+          }`}
+          title={hidePaused ? 'Paused ads are hidden' : 'Showing paused ads'}
+        >
+          {hidePaused ? 'Paused Hidden' : 'Showing Paused'}
+          {(data.summary.paused_ads ?? 0) > 0 && <span className="text-gray-500">({data.summary.paused_ads})</span>}
+        </button>
+
         {/* Tab toggle */}
         <div className="flex ml-auto bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
           <button
@@ -130,7 +146,7 @@ export default function AdPerformance({ refreshKey }: { refreshKey: number }) {
               </h3>
               <div className="space-y-2">
                 {scaleCampaigns.map(c => (
-                  <CampaignCard key={c.campaign} campaign={c} ads={data.ads} expanded={expandedCampaigns.has(c.campaign)} onToggle={() => toggleExpand(c.campaign)} fmt={fmt} />
+                  <CampaignCard key={c.campaign} campaign={c} ads={activeAds} expanded={expandedCampaigns.has(c.campaign)} onToggle={() => toggleExpand(c.campaign)} fmt={fmt} hidePaused={hidePaused} />
                 ))}
               </div>
             </div>
@@ -144,7 +160,7 @@ export default function AdPerformance({ refreshKey }: { refreshKey: number }) {
               </h3>
               <div className="space-y-2">
                 {dropCampaigns.map(c => (
-                  <CampaignCard key={c.campaign} campaign={c} ads={data.ads} expanded={expandedCampaigns.has(c.campaign)} onToggle={() => toggleExpand(c.campaign)} fmt={fmt} />
+                  <CampaignCard key={c.campaign} campaign={c} ads={activeAds} expanded={expandedCampaigns.has(c.campaign)} onToggle={() => toggleExpand(c.campaign)} fmt={fmt} hidePaused={hidePaused} />
                 ))}
               </div>
             </div>
@@ -163,7 +179,7 @@ export default function AdPerformance({ refreshKey }: { refreshKey: number }) {
               {showHold && (
                 <div className="space-y-2">
                   {holdCampaigns.map(c => (
-                    <CampaignCard key={c.campaign} campaign={c} ads={data.ads} expanded={expandedCampaigns.has(c.campaign)} onToggle={() => toggleExpand(c.campaign)} fmt={fmt} />
+                    <CampaignCard key={c.campaign} campaign={c} ads={activeAds} expanded={expandedCampaigns.has(c.campaign)} onToggle={() => toggleExpand(c.campaign)} fmt={fmt} hidePaused={hidePaused} />
                   ))}
                 </div>
               )}
@@ -245,12 +261,14 @@ function CampaignCard({
   expanded,
   onToggle,
   fmt,
+  hidePaused,
 }: {
   campaign: CampaignPerformance;
   ads: AdPerf[];
   expanded: boolean;
   onToggle: () => void;
   fmt: (n: number) => string;
+  hidePaused: boolean;
 }) {
   const style = campaignRecStyles[campaign.recommendation];
 
@@ -303,7 +321,7 @@ function CampaignCard({
       )}
 
       {/* Expanded: show individual ads */}
-      {expanded && <CampaignAdsTable ads={ads} campaign={campaign} fmt={fmt} />}
+      {expanded && <CampaignAdsTable ads={ads} campaign={campaign} fmt={fmt} hidePaused={hidePaused} />}
     </div>
   );
 }
@@ -359,11 +377,15 @@ function AdChart({ adName }: { adName: string }) {
   );
 }
 
-function CampaignAdsTable({ ads, campaign, fmt }: { ads: AdPerf[]; campaign: CampaignPerformance; fmt: (n: number) => string }) {
+function CampaignAdsTable({ ads, campaign, fmt, hidePaused }: { ads: AdPerf[]; campaign: CampaignPerformance; fmt: (n: number) => string; hidePaused: boolean }) {
   const [expandedAd, setExpandedAd] = useState<string | null>(null);
 
   const adSet = new Set(campaign.ads);
-  const campaignAds = ads.filter(a => adSet.has(a.ad_name)).sort((a, b) => b.total_spend - a.total_spend);
+  const allCampaignAds = ads.filter(a => adSet.has(a.ad_name));
+  const campaignAds = (hidePaused
+    ? allCampaignAds.filter(a => a.ad_delivery === 'active' || a.ad_delivery === '')
+    : allCampaignAds
+  ).sort((a, b) => b.total_spend - a.total_spend);
 
   return (
     <div className="border-t border-gray-800/50 px-4 py-2">
@@ -428,9 +450,13 @@ function AdRow({ ad, fmt, expanded, onToggle }: { ad: AdPerf; fmt: (n: number) =
           {ad.first_seen ? new Date(ad.first_seen + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '-'}
         </td>
         <td className="py-1 px-1">
-          {ad.recommendation === 'KILL' && (
+          {ad.ad_delivery && ad.ad_delivery !== 'active' && ad.ad_delivery !== '' ? (
+            <span className="px-1.5 py-0.5 text-[10px] font-bold uppercase rounded bg-gray-700 text-gray-400 border border-gray-600">
+              {ad.ad_delivery === 'paused' ? 'PAUSED' : ad.ad_delivery.replace(/_/g, ' ')}
+            </span>
+          ) : ad.recommendation === 'KILL' ? (
             <span className="flex items-center gap-1 text-red-400"><AlertTriangle size={10} /> KILL</span>
-          )}
+          ) : null}
         </td>
       </tr>
       {expanded && (

@@ -198,7 +198,19 @@ export async function GET(request: NextRequest) {
         kill_reason,
         _inactive: isInactive,
       };
-    }).filter(ad => !(ad as { _inactive: boolean })._inactive);
+    });
+
+    // Separate active and paused ads (don't filter paused out - let frontend toggle)
+    // Only filter out truly dead ads (no spend in 7+ days AND not in API status list)
+    const filteredResults = adResults.filter(ad => {
+      const ext = ad as AdPerformance & { _inactive: boolean };
+      // Keep paused ads (they have a real status from the API)
+      if (ext.ad_delivery && ext.ad_delivery !== 'active' && ext.ad_delivery !== '') return true;
+      // Remove only ads with no recent activity at all
+      if (ext._inactive && ext.ad_delivery === 'active') return false;
+      return true;
+    });
+    const adResultsFinal = filteredResults;
 
     // --- CAMPAIGN-LEVEL DATA (grouped by client + campaign_type) ---
     const spendRows = db.prepare(`
@@ -331,16 +343,17 @@ export async function GET(request: NextRequest) {
     campaigns.sort((a, b) => recOrder[a.recommendation] - recOrder[b.recommendation] || b.spend_72h - a.spend_72h);
 
     const summary = {
-      total_ads: adResults.length,
+      total_ads: adResultsFinal.filter(a => a.ad_delivery === 'active').length,
+      paused_ads: adResultsFinal.filter(a => a.ad_delivery !== 'active').length,
       total_campaigns: campaigns.length,
-      kill_count: adResults.filter(r => r.recommendation === 'KILL').length,
+      kill_count: adResultsFinal.filter(r => r.recommendation === 'KILL').length,
       scale_count: campaigns.filter(r => r.recommendation === 'SCALE').length,
       drop_count: campaigns.filter(r => r.recommendation === 'DROP').length,
       hold_count: campaigns.filter(r => r.recommendation === 'HOLD').length,
-      total_wasted_spend: adResults.filter(r => r.recommendation === 'KILL' && r.actblue_revenue === 0).reduce((s, r) => s + r.total_spend, 0),
+      total_wasted_spend: adResultsFinal.filter(r => r.recommendation === 'KILL' && r.actblue_revenue === 0).reduce((s, r) => s + r.total_spend, 0),
     };
 
-    return NextResponse.json({ ads: adResults, campaigns, summary });
+    return NextResponse.json({ ads: adResultsFinal, campaigns, summary });
   } catch (error) {
     console.error('Ad performance error:', error);
     return NextResponse.json({ error: String(error) }, { status: 500 });
