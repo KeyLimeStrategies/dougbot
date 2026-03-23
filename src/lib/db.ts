@@ -151,6 +151,36 @@ function initializeSchema(db: Database.Database) {
     // Column already exists
   }
 
+  // Snapshot tables for tracking real Meta API status/budget changes
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS ad_status_snapshots (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ad_id TEXT NOT NULL,
+      ad_name TEXT NOT NULL,
+      client_id INTEGER NOT NULL,
+      effective_status TEXT NOT NULL,
+      campaign_name TEXT,
+      adset_name TEXT,
+      snapped_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (client_id) REFERENCES clients(id),
+      UNIQUE(ad_id)
+    )
+  `);
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS campaign_budget_snapshots (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      campaign_id TEXT NOT NULL,
+      campaign_name TEXT NOT NULL,
+      client_id INTEGER NOT NULL,
+      daily_budget REAL,
+      lifetime_budget REAL,
+      snapped_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (client_id) REFERENCES clients(id),
+      UNIQUE(campaign_id)
+    )
+  `);
+
   // Seed clients
   const insertClient = db.prepare(
     'INSERT OR IGNORE INTO clients (short_code, name, entity_name) VALUES (?, ?, ?)'

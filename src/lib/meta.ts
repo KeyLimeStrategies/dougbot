@@ -82,12 +82,70 @@ export interface MetaSyncResult {
   error?: string;
 }
 
+// Fetch all ads with their effective_status
+async function fetchAdStatuses(config: MetaConfig): Promise<{ id: string; name: string; effective_status: string; campaign_name: string; adset_name: string; campaign_id: string }[]> {
+  const results: { id: string; name: string; effective_status: string; campaign_name: string; adset_name: string; campaign_id: string }[] = [];
+  let url = `${GRAPH_API_BASE}/${config.adAccountId}/ads?fields=name,effective_status,campaign{name,id},adset{name}&limit=500&access_token=${config.accessToken}`;
+
+  while (url) {
+    const res = await fetch(url);
+    if (!res.ok) break;
+    const data = await res.json();
+    for (const ad of data.data || []) {
+      results.push({
+        id: ad.id,
+        name: ad.name,
+        effective_status: ad.effective_status,
+        campaign_name: ad.campaign?.name || '',
+        adset_name: ad.adset?.name || '',
+        campaign_id: ad.campaign?.id || '',
+      });
+    }
+    url = data.paging?.next || '';
+  }
+  return results;
+}
+
+// Fetch campaign budgets
+async function fetchCampaignBudgets(config: MetaConfig): Promise<{ id: string; name: string; daily_budget: string | null; lifetime_budget: string | null }[]> {
+  const results: { id: string; name: string; daily_budget: string | null; lifetime_budget: string | null }[] = [];
+  let url = `${GRAPH_API_BASE}/${config.adAccountId}/campaigns?fields=name,daily_budget,lifetime_budget&limit=500&access_token=${config.accessToken}`;
+
+  while (url) {
+    const res = await fetch(url);
+    if (!res.ok) break;
+    const data = await res.json();
+    for (const c of data.data || []) {
+      results.push({
+        id: c.id,
+        name: c.name,
+        daily_budget: c.daily_budget || null,
+        lifetime_budget: c.lifetime_budget || null,
+      });
+    }
+    url = data.paging?.next || '';
+  }
+  return results;
+}
+
 // Sync Meta ad data into the database
 export async function syncMetaAds(dateStart: string, dateEnd: string): Promise<MetaSyncResult> {
   const config = getMetaConfig();
-  const ads = await fetchAdInsights(config, dateStart, dateEnd);
+
+  // Fetch insights, ad statuses, and campaign budgets in parallel
+  const [ads, adStatuses, campaignBudgets] = await Promise.all([
+    fetchAdInsights(config, dateStart, dateEnd),
+    fetchAdStatuses(config).catch(() => []),
+    fetchCampaignBudgets(config).catch(() => []),
+  ]);
 
   const db = getDb();
+
+  // Build a map of ad_id -> effective_status for use in upsert
+  const statusMap = new Map<string, string>();
+  for (const s of adStatuses) {
+    statusMap.set(s.id, s.effective_status);
+  }
 
   const upsertAdSpend = db.prepare(`
     INSERT INTO ad_spend (date, client_id, ad_name, spend, results, reach, frequency, impressions, cpm, link_clicks, ctr, ad_delivery, attribution_setting, cost_per_result, campaign_type, batch)
@@ -128,6 +186,8 @@ export async function syncMetaAds(dateStart: string, dateEnd: string): Promise<M
       const costPerResult = purchases > 0 ? spend / purchases : 0;
 
       const date = ad.date_start;
+      // Use real effective_status from API if available
+      const delivery = statusMap.get(ad.ad_id) || 'active';
 
       upsertAdSpend.run(
         date,
@@ -141,7 +201,7 @@ export async function syncMetaAds(dateStart: string, dateEnd: string): Promise<M
         cpm,
         linkClicks,
         ctr,
-        'active', // API only returns ads that had delivery
+        delivery.toLowerCase(),
         '7-day click', // default attribution
         costPerResult,
         getCampaignType(adName),
@@ -153,8 +213,11 @@ export async function syncMetaAds(dateStart: string, dateEnd: string): Promise<M
 
   insertMany();
 
-  // Auto-detect campaign changes by comparing current sync with previous data
-  detectCampaignChanges(db, dateStart, dateEnd);
+  // Detect real changes from API data (status changes, budget changes)
+  detectRealChanges(db, adStatuses, campaignBudgets);
+
+  // Also detect new ads from insights data
+  detectNewAds(db, dateStart, dateEnd);
 
   // Record upload
   db.prepare('INSERT INTO uploads (filename, upload_type, rows_processed) VALUES (?, ?, ?)').run(
@@ -287,23 +350,108 @@ function recalculateSummaries() {
   updateAll();
 }
 
-function detectCampaignChanges(db: ReturnType<typeof getDb>, dateStart: string, dateEnd: string) {
+// Detect real changes using Meta API data (effective_status, daily_budget)
+function detectRealChanges(
+  db: ReturnType<typeof getDb>,
+  adStatuses: { id: string; name: string; effective_status: string; campaign_name: string; adset_name: string; campaign_id: string }[],
+  campaignBudgets: { id: string; name: string; daily_budget: string | null; lifetime_budget: string | null }[]
+) {
   try {
-    // Purge auto-detected entries in this range (they'll be re-detected with current data)
-    // Manual entries are preserved
+    const todayET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' })).toISOString().split('T')[0];
+
+    // Clear old inferred events (budget_change, ad_toggled) - we now use real API data
+    db.prepare("DELETE FROM campaign_changes WHERE source = 'auto' AND change_type IN ('budget_change', 'ad_toggled', 'status_change')").run();
+
+    const insertChange = db.prepare(
+      "INSERT INTO campaign_changes (date, client_id, change_type, description, source) VALUES (?, ?, ?, ?, 'auto')"
+    );
+
+    // === 1. Detect ad status changes (active -> paused, etc.) ===
+    const upsertStatus = db.prepare(`
+      INSERT INTO ad_status_snapshots (ad_id, ad_name, client_id, effective_status, campaign_name, adset_name, snapped_at)
+      VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+      ON CONFLICT(ad_id) DO UPDATE SET
+        effective_status = excluded.effective_status,
+        campaign_name = excluded.campaign_name,
+        adset_name = excluded.adset_name,
+        snapped_at = excluded.snapped_at
+    `);
+
+    const getPrevStatus = db.prepare('SELECT effective_status FROM ad_status_snapshots WHERE ad_id = ?');
+
+    for (const ad of adStatuses) {
+      const client = getClientByAdName(ad.name);
+      if (!client) continue;
+
+      const prev = getPrevStatus.get(ad.id) as { effective_status: string } | undefined;
+
+      if (prev && prev.effective_status !== ad.effective_status) {
+        // Status changed - log it
+        const fromLabel = prev.effective_status.replace(/_/g, ' ').toLowerCase();
+        const toLabel = ad.effective_status.replace(/_/g, ' ').toLowerCase();
+        insertChange.run(todayET, client.id, 'status_change',
+          `${ad.name}: ${fromLabel} → ${toLabel}`);
+      }
+
+      // Update snapshot
+      upsertStatus.run(ad.id, ad.name, client.id, ad.effective_status, ad.campaign_name, ad.adset_name);
+    }
+
+    // === 2. Detect campaign budget changes ===
+    const upsertBudget = db.prepare(`
+      INSERT INTO campaign_budget_snapshots (campaign_id, campaign_name, client_id, daily_budget, lifetime_budget, snapped_at)
+      VALUES (?, ?, ?, ?, ?, datetime('now'))
+      ON CONFLICT(campaign_id) DO UPDATE SET
+        daily_budget = excluded.daily_budget,
+        lifetime_budget = excluded.lifetime_budget,
+        campaign_name = excluded.campaign_name,
+        snapped_at = excluded.snapped_at
+    `);
+
+    const getPrevBudget = db.prepare('SELECT daily_budget, lifetime_budget FROM campaign_budget_snapshots WHERE campaign_id = ?');
+
+    for (const campaign of campaignBudgets) {
+      // Try to figure out which client this campaign belongs to
+      // Campaign names follow pattern: "{Client Name} {CampaignType}"
+      const clientMatch = adStatuses.find(a => a.campaign_id === campaign.id);
+      const client = clientMatch ? getClientByAdName(clientMatch.name) : null;
+      if (!client) continue;
+
+      // Budget is in cents from Meta API
+      const currentDaily = campaign.daily_budget ? parseFloat(campaign.daily_budget) / 100 : null;
+      const currentLifetime = campaign.lifetime_budget ? parseFloat(campaign.lifetime_budget) / 100 : null;
+
+      const prev = getPrevBudget.get(campaign.id) as { daily_budget: number | null; lifetime_budget: number | null } | undefined;
+
+      if (prev && prev.daily_budget && currentDaily) {
+        const changeRatio = currentDaily / prev.daily_budget;
+        if (changeRatio > 1.15 || changeRatio < 0.85) {
+          const dir = changeRatio > 1 ? 'up' : 'down';
+          const pct = Math.round(Math.abs(changeRatio - 1) * 100);
+          insertChange.run(todayET, client.id, 'budget_change',
+            `${campaign.name} daily budget ${dir} ${pct}% ($${prev.daily_budget.toFixed(0)} → $${currentDaily.toFixed(0)})`);
+        }
+      }
+
+      upsertBudget.run(campaign.id, campaign.name, client.id, currentDaily, currentLifetime);
+    }
+  } catch (err) {
+    console.error('Real change detection error:', err);
+  }
+}
+
+// Detect new ads (first appearance in ad_spend)
+function detectNewAds(db: ReturnType<typeof getDb>, dateStart: string, dateEnd: string) {
+  try {
+    // Purge old auto-detected ad_launched entries in this range
     db.prepare(
-      "DELETE FROM campaign_changes WHERE date >= ? AND date <= ? AND source = 'auto'"
+      "DELETE FROM campaign_changes WHERE date >= ? AND date <= ? AND source = 'auto' AND change_type = 'ad_launched'"
     ).run(dateStart, dateEnd);
 
     const insertChange = db.prepare(
       "INSERT INTO campaign_changes (date, client_id, change_type, description, source) VALUES (?, ?, ?, ?, 'auto')"
     );
 
-    const logChange = (date: string, clientId: number, type: string, desc: string) => {
-      insertChange.run(date, clientId, type, desc);
-    };
-
-    // 1. Detect new ads (first appearance in ad_spend)
     const newAds = db.prepare(`
       SELECT a.ad_name, a.client_id, MIN(a.date) as first_date, c.name as client_name
       FROM ad_spend a
@@ -316,72 +464,9 @@ function detectCampaignChanges(db: ReturnType<typeof getDb>, dateStart: string, 
     `).all(dateStart, dateEnd, dateStart) as { ad_name: string; client_id: number; first_date: string; client_name: string }[];
 
     for (const ad of newAds) {
-      logChange(ad.first_date, ad.client_id, 'ad_launched', `New ad: ${ad.ad_name}`);
-    }
-
-    // 2. Detect ads likely toggled off: had spend on 3+ of the last 7 days,
-    //    but zero spend for the last 2+ consecutive days in the sync range.
-    //    This filters out organic $0 days (CostCap not delivering, etc.)
-    const likelyToggled = db.prepare(`
-      SELECT a.ad_name, a.client_id, c.name as client_name,
-        MAX(a.date) as last_spend_date,
-        COUNT(CASE WHEN a.spend > 0 AND a.date >= date(?, '-7 days') AND a.date < ? THEN 1 END) as active_days_prior,
-        COUNT(CASE WHEN a.spend = 0 AND a.date >= ? THEN 1 END) as zero_days_in_range,
-        COUNT(CASE WHEN a.date >= ? THEN 1 END) as total_days_in_range
-      FROM ad_spend a
-      JOIN clients c ON c.id = a.client_id
-      WHERE a.date >= date(?, '-7 days') AND a.date <= ?
-      GROUP BY a.ad_name, a.client_id
-      HAVING active_days_prior >= 3
-        AND total_days_in_range >= 2
-        AND zero_days_in_range = total_days_in_range
-    `).all(dateStart, dateStart, dateStart, dateStart, dateStart, dateEnd) as {
-      ad_name: string; client_id: number; client_name: string;
-      last_spend_date: string; active_days_prior: number;
-      zero_days_in_range: number; total_days_in_range: number;
-    }[];
-
-    for (const ad of likelyToggled) {
-      logChange(dateStart, ad.client_id, 'ad_toggled', `Ad likely turned off: ${ad.ad_name} (was active ${ad.active_days_prior}/7 days, now $0 for ${ad.zero_days_in_range} days)`);
-    }
-
-    // 3. Detect significant budget changes (campaign-level daily spend changed >15% day-over-day)
-    // Exclude today (partial data would cause false positives)
-    const todayET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' })).toISOString().split('T')[0];
-    const dailyCampaignSpend = db.prepare(`
-      SELECT a.date, a.client_id, a.campaign_type, SUM(a.spend) as daily_spend
-      FROM ad_spend a
-      WHERE a.date >= date(?, '-1 day') AND a.date <= ? AND a.date != ?
-        AND a.campaign_type != 'cap'
-      GROUP BY a.date, a.client_id, a.campaign_type
-      HAVING daily_spend > 10
-      ORDER BY a.client_id, a.campaign_type, a.date
-    `).all(dateStart, dateEnd, todayET) as { date: string; client_id: number; campaign_type: string; daily_spend: number }[];
-
-    // Group by client+campaign_type, compare consecutive days
-    const campaignKey = (r: { client_id: number; campaign_type: string }) => `${r.client_id}:${r.campaign_type}`;
-    const prevDay = new Map<string, number>();
-
-    for (const row of dailyCampaignSpend) {
-      const key = campaignKey(row);
-      const prev = prevDay.get(key);
-      if (prev !== undefined && prev > 10) {
-        const changeRatio = row.daily_spend / prev;
-        if (changeRatio > 1.15) {
-          const client = db.prepare('SELECT name FROM clients WHERE id = ?').get(row.client_id) as { name: string } | undefined;
-          const typeLabel = row.campaign_type === 'val' ? 'Value' : row.campaign_type === 'cap' ? 'CostCap' : row.campaign_type === 'abx20' ? 'ABX' : row.campaign_type;
-          logChange(row.date, row.client_id, 'budget_change',
-            `${client?.name || ''} ${typeLabel} spend up ${Math.round((changeRatio - 1) * 100)}% ($${prev.toFixed(0)} -> $${row.daily_spend.toFixed(0)})`);
-        } else if (changeRatio < 0.85) {
-          const client = db.prepare('SELECT name FROM clients WHERE id = ?').get(row.client_id) as { name: string } | undefined;
-          const typeLabel = row.campaign_type === 'val' ? 'Value' : row.campaign_type === 'cap' ? 'CostCap' : row.campaign_type === 'abx20' ? 'ABX' : row.campaign_type;
-          logChange(row.date, row.client_id, 'budget_change',
-            `${client?.name || ''} ${typeLabel} spend down ${Math.round((1 - changeRatio) * 100)}% ($${prev.toFixed(0)} -> $${row.daily_spend.toFixed(0)})`);
-        }
-      }
-      prevDay.set(key, row.daily_spend);
+      insertChange.run(ad.first_date, ad.client_id, 'ad_launched', `New ad: ${ad.ad_name}`);
     }
   } catch (err) {
-    console.error('Change detection error:', err);
+    console.error('New ad detection error:', err);
   }
 }
