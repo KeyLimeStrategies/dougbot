@@ -238,7 +238,7 @@ export function parseNumeroCsv(csvText: string, filename: string): { rowsProcess
   return { rowsProcessed, errors };
 }
 
-export function parseActBlueCsv(csvText: string, filename: string): { rowsProcessed: number; errors: string[] } {
+export function parseActBlueCsv(csvText: string, filename: string, knownShortCode?: string): { rowsProcessed: number; errors: string[] } {
   const db = getDb();
   const errors: string[] = [];
 
@@ -286,7 +286,15 @@ export function parseActBlueCsv(csvText: string, filename: string): { rowsProces
       const date = normalizeDate(dateStr.split(' ')[0]); // strip time
 
       let clientId: number | null = null;
-      if (refcode) {
+
+      // If we know the client from the API sync, use that directly
+      if (knownShortCode) {
+        const client = db.prepare('SELECT id FROM clients WHERE short_code = ?').get(knownShortCode) as { id: number } | undefined;
+        if (client) clientId = client.id;
+      }
+
+      // Otherwise try matching by refcode (ad name prefix), then by recipient
+      if (!clientId && refcode) {
         const client = getClientByAdName(refcode);
         if (client) clientId = client.id;
       }

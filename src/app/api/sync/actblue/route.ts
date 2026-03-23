@@ -33,7 +33,7 @@ export async function POST(request: NextRequest) {
 
       try {
         const { csvText, shortCode } = await syncActBlueForCandidate(creds, date_start, actblue_date_end);
-        const parsed = parseActBlueCsv(csvText, `actblue_${shortCode}_${date_start}_${date_end}.csv`);
+        const parsed = parseActBlueCsv(csvText, `actblue_${shortCode}_${date_start}_${date_end}.csv`, shortCode);
         results.push({
           shortCode,
           success: true,
@@ -53,7 +53,7 @@ export async function POST(request: NextRequest) {
       // Parse and store each CSV
       for (const { csvText, shortCode } of csvTexts) {
         try {
-          const parsed = parseActBlueCsv(csvText, `actblue_${shortCode}_${date_start}_${date_end}.csv`);
+          const parsed = parseActBlueCsv(csvText, `actblue_${shortCode}_${date_start}_${date_end}.csv`, shortCode);
           results.push({
             shortCode,
             success: true,
