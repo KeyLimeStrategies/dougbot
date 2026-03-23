@@ -216,6 +216,9 @@ export async function syncMetaAds(dateStart: string, dateEnd: string): Promise<M
   // Detect real changes from API data (status changes, budget changes)
   detectRealChanges(db, adStatuses, campaignBudgets);
 
+  // Sync activity log for real historical changelog
+  await syncActivityLog(dateStart).catch(err => console.error('Activity log sync failed:', err));
+
   // Also detect new ads from insights data
   detectNewAds(db, dateStart, dateEnd);
 
@@ -348,6 +351,113 @@ function recalculateSummaries() {
   });
 
   updateAll();
+}
+
+// Fetch and store Meta activity log (real changelog from the API)
+export async function syncActivityLog(since?: string): Promise<number> {
+  const config = getMetaConfig();
+  const db = getDb();
+
+  // Default to 30 days back
+  const sinceDate = since || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+  const sinceUnix = Math.floor(new Date(sinceDate + 'T00:00:00').getTime() / 1000);
+
+  let eventsLogged = 0;
+
+  // Purge old activity-log-sourced events in range (will re-import)
+  db.prepare("DELETE FROM campaign_changes WHERE source = 'activity_log' AND date >= ?").run(sinceDate);
+
+  const insertChange = db.prepare(
+    "INSERT INTO campaign_changes (date, client_id, change_type, description, source) VALUES (?, ?, ?, ?, 'activity_log')"
+  );
+
+  // Map Meta event types to our change_type
+  const eventTypeMap: Record<string, string> = {
+    'update_campaign_budget': 'budget_change',
+    'update_adset_budget': 'budget_change',
+    'update_campaign_daily_budget': 'budget_change',
+    'update_adset_daily_budget': 'budget_change',
+    'update_campaign_lifetime_budget': 'budget_change',
+    'update_campaign_run_status': 'status_change',
+    'update_adset_run_status': 'status_change',
+    'update_ad_run_status': 'status_change',
+    'create_ad': 'ad_launched',
+    'create_adset': 'ad_launched',
+    'create_campaign': 'ad_launched',
+    'update_ad_creative': 'creative_change',
+    'update_campaign_bid_strategy': 'budget_change',
+    'update_adset_bid_amount': 'budget_change',
+    'update_adset_targeting': 'creative_change',
+  };
+
+  try {
+    let url = `${GRAPH_API_BASE}/${config.adAccountId}/activities?fields=event_type,event_time,object_name,object_id,extra_data,actor_name&since=${sinceUnix}&limit=500&access_token=${config.accessToken}`;
+
+    while (url) {
+      const res = await fetch(url);
+      if (!res.ok) {
+        const errText = await res.text();
+        console.error('Activity log API error:', errText);
+        break;
+      }
+
+      const data = await res.json();
+
+      for (const event of data.data || []) {
+        const changeType = eventTypeMap[event.event_type];
+        if (!changeType) continue; // Skip event types we don't care about
+
+        const eventDate = new Date(event.event_time).toISOString().split('T')[0];
+        const objectName = event.object_name || '';
+
+        // Try to match to a client
+        const client = getClientByAdName(objectName);
+        if (!client) continue;
+
+        // Build description from extra_data
+        let description = objectName;
+        try {
+          if (event.extra_data) {
+            const extra = typeof event.extra_data === 'string' ? JSON.parse(event.extra_data) : event.extra_data;
+
+            if (changeType === 'budget_change') {
+              const oldVal = extra.old_value || extra.old_val;
+              const newVal = extra.new_value || extra.new_val;
+              if (oldVal && newVal) {
+                // Budget values from activity log are in cents
+                const oldBudget = parseFloat(oldVal) / 100;
+                const newBudget = parseFloat(newVal) / 100;
+                const dir = newBudget > oldBudget ? 'up' : 'down';
+                const pct = oldBudget > 0 ? Math.round(Math.abs(newBudget / oldBudget - 1) * 100) : 0;
+                description = `${objectName} budget ${dir} ${pct}% ($${oldBudget.toFixed(0)} → $${newBudget.toFixed(0)})`;
+              } else {
+                description = `${objectName}: ${event.event_type.replace(/_/g, ' ')}`;
+              }
+            } else if (changeType === 'status_change') {
+              const oldVal = extra.old_value || extra.old_val || '';
+              const newVal = extra.new_value || extra.new_val || '';
+              description = `${objectName}: ${oldVal.toLowerCase()} → ${newVal.toLowerCase()}`;
+            } else if (changeType === 'ad_launched') {
+              description = `New: ${objectName}`;
+            } else {
+              description = `${objectName}: ${event.event_type.replace(/_/g, ' ')}`;
+            }
+          }
+        } catch {
+          description = `${objectName}: ${event.event_type.replace(/_/g, ' ')}`;
+        }
+
+        insertChange.run(eventDate, client.id, changeType, description);
+        eventsLogged++;
+      }
+
+      url = data.paging?.next || '';
+    }
+  } catch (err) {
+    console.error('Activity log sync error:', err);
+  }
+
+  return eventsLogged;
 }
 
 // Detect real changes using Meta API data (effective_status, daily_budget)
