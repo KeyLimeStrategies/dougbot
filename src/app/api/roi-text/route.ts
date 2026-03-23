@@ -15,7 +15,7 @@ export async function GET(request: NextRequest) {
       SELECT c.name as client_name, ds.total_revenue, ds.spend_with_fee, ds.true_roas
       FROM daily_summary ds
       JOIN clients c ON c.id = ds.client_id
-      WHERE ds.date = ? AND (ds.total_spend > 0 OR ds.total_revenue > 0) AND c.active = 1
+      WHERE ds.date = ? AND (ds.total_spend > 0 OR ds.total_revenue > 0) AND c.active = 1 AND c.is_ad_client = 1
       ORDER BY ds.true_roas DESC
     `).all(date) as { client_name: string; total_revenue: number; spend_with_fee: number; true_roas: number }[];
 

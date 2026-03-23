@@ -44,7 +44,7 @@ export async function GET(request: NextRequest) {
           WHERE fundraising_page LIKE '%fbig%' AND recurrence_number = 1
           GROUP BY date, client_id
         ) rev ON rev.date = a.date AND rev.client_id = a.client_id
-        WHERE a.date >= ? AND c.active = 1
+        WHERE a.date >= ? AND c.active = 1 AND c.is_ad_client = 1
         ORDER BY a.date ASC, c.name ASC
       `).all(nDaysAgoET) as HistoricalPoint[];
     } else {
@@ -53,7 +53,7 @@ export async function GET(request: NextRequest) {
                ds.true_roas, ds.total_spend, ds.total_revenue, ds.spend_with_fee
         FROM daily_summary ds
         JOIN clients c ON c.id = ds.client_id
-        WHERE ds.date >= ? AND c.active = 1
+        WHERE ds.date >= ? AND c.active = 1 AND c.is_ad_client = 1
         ORDER BY ds.date ASC, c.name ASC
       `).all(nDaysAgoET) as HistoricalPoint[];
     }

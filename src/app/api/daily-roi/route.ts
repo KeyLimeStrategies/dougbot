@@ -61,7 +61,7 @@ export async function GET(request: NextRequest) {
           WHERE fundraising_page LIKE '%fbig%' AND recurrence_number = 1
           GROUP BY date, client_id
         ) rev ON rev.date = a.date AND rev.client_id = a.client_id
-        WHERE c.active = 1 ${dateWhere}
+        WHERE c.active = 1 AND c.is_ad_client = 1 ${dateWhere}
         ORDER BY a.date DESC, true_roas DESC
       `).all(...queryParams) as DailySummary[];
     } else {
@@ -75,7 +75,7 @@ export async function GET(request: NextRequest) {
                  ds.true_roas, ds.profit, ds.keylime_cut
           FROM daily_summary ds
           JOIN clients c ON c.id = ds.client_id
-          WHERE ds.date = ? AND c.active = 1
+          WHERE ds.date = ? AND c.active = 1 AND c.is_ad_client = 1
           ORDER BY ds.true_roas DESC
         `;
         params = [date];
@@ -86,7 +86,7 @@ export async function GET(request: NextRequest) {
                  ds.true_roas, ds.profit, ds.keylime_cut
           FROM daily_summary ds
           JOIN clients c ON c.id = ds.client_id
-          WHERE ds.date >= ? AND ds.date <= ? AND c.active = 1
+          WHERE ds.date >= ? AND ds.date <= ? AND c.active = 1 AND c.is_ad_client = 1
           ORDER BY ds.date DESC, ds.true_roas DESC
         `;
         params = [nDaysAgoET, endDate];
@@ -97,7 +97,7 @@ export async function GET(request: NextRequest) {
                  ds.true_roas, ds.profit, ds.keylime_cut
           FROM daily_summary ds
           JOIN clients c ON c.id = ds.client_id
-          WHERE ds.date >= ? AND c.active = 1
+          WHERE ds.date >= ? AND c.active = 1 AND c.is_ad_client = 1
           ORDER BY ds.date DESC, ds.true_roas DESC
         `;
         params = [nDaysAgoET];

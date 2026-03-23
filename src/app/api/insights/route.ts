@@ -36,7 +36,7 @@ export async function POST(request: NextRequest) {
         ds.true_roas, ds.profit, ds.keylime_cut
       FROM daily_summary ds
       JOIN clients c ON c.id = ds.client_id
-      WHERE ds.date >= date(?, '-7 days') AND c.active = 1
+      WHERE ds.date >= date(?, '-7 days') AND c.active = 1 AND c.is_ad_client = 1
         AND (ds.total_spend > 0 OR ds.total_revenue > 0)
       ORDER BY ds.date DESC, ds.total_spend DESC
     `).all(latestDate.d) as { date: string; name: string; short_code: string; total_spend: number; total_revenue: number; spend_with_fee: number; true_roas: number; profit: number; keylime_cut: number }[];
@@ -54,7 +54,7 @@ export async function POST(request: NextRequest) {
         MIN(a.date) as first_seen
       FROM ad_spend a
       JOIN clients c ON c.id = a.client_id
-      WHERE c.active = 1
+      WHERE c.active = 1 AND c.is_ad_client = 1
       GROUP BY a.ad_name, c.name, c.short_code, c.fee_rate, a.campaign_type
       HAVING total_spend > 5
       ORDER BY spend_3d DESC
@@ -67,7 +67,7 @@ export async function POST(request: NextRequest) {
         SUM(CASE WHEN r.date >= date(?, '-3 days') THEN r.amount ELSE 0 END) as revenue_3d
       FROM revenue r
       JOIN clients c ON c.id = r.client_id
-      WHERE r.refcode IS NOT NULL AND r.refcode != '' AND c.active = 1
+      WHERE r.refcode IS NOT NULL AND r.refcode != '' AND c.active = 1 AND c.is_ad_client = 1
         AND r.fundraising_page LIKE '%fbig%'
       GROUP BY r.refcode
     `).all(latestDate.d) as { refcode: string; total_revenue: number; revenue_3d: number }[];
@@ -154,7 +154,7 @@ export async function POST(request: NextRequest) {
         SUM(a.results) as daily_results
       FROM ad_spend a
       JOIN clients c ON c.id = a.client_id
-      WHERE a.date >= date(?, '-7 days') AND c.active = 1
+      WHERE a.date >= date(?, '-7 days') AND c.active = 1 AND c.is_ad_client = 1
       GROUP BY a.date, c.short_code, a.campaign_type
       ORDER BY a.date DESC, daily_spend DESC
     `).all(latestDate.d) as { date: string; campaign: string; short_code: string; fee_rate: number; campaign_type: string; daily_spend: number; daily_results: number }[];
@@ -174,7 +174,7 @@ export async function POST(request: NextRequest) {
         SUM(r.amount) as daily_revenue
       FROM revenue r
       JOIN clients c ON c.id = r.client_id
-      WHERE r.date >= date(?, '-7 days') AND c.active = 1
+      WHERE r.date >= date(?, '-7 days') AND c.active = 1 AND c.is_ad_client = 1
         AND r.fundraising_page LIKE '%fbig%'
         AND r.refcode IS NOT NULL AND r.refcode != ''
       GROUP BY r.date, c.short_code, campaign_type

@@ -72,7 +72,7 @@ export async function GET(request: NextRequest) {
         SUM(CASE WHEN a.date >= ? AND a.date < ? THEN a.results ELSE 0 END) as results_prev_24h
       FROM ad_spend a
       JOIN clients c ON c.id = a.client_id
-      WHERE c.active = 1 ${clientWhere}
+      WHERE c.active = 1 AND c.is_ad_client = 1 ${clientWhere}
       GROUP BY a.ad_name, c.name, c.short_code, c.fee_rate
       ORDER BY total_spend DESC
     `).all(threeDaysAgoET, threeDaysAgoET, oneDayAgoET, twoDaysAgoET, oneDayAgoET, oneDayAgoET, twoDaysAgoET, oneDayAgoET, ...params) as (AdPerformance & { fee_rate: number; first_seen: string; last_seen: string; days_with_data: number; spend_24h: number; spend_prev_24h: number; results_24h: number; results_prev_24h: number })[];
@@ -87,7 +87,7 @@ export async function GET(request: NextRequest) {
         SUM(CASE WHEN r.date >= ? AND r.date < ? THEN r.amount ELSE 0 END) as revenue_prev_24h
       FROM revenue r
       JOIN clients c ON c.id = r.client_id
-      WHERE r.refcode IS NOT NULL AND r.refcode != '' AND c.active = 1
+      WHERE r.refcode IS NOT NULL AND r.refcode != '' AND c.active = 1 AND c.is_ad_client = 1
         AND r.fundraising_page LIKE '%fbig%' ${clientWhere}
       GROUP BY r.refcode
     `).all(threeDaysAgoET, oneDayAgoET, twoDaysAgoET, oneDayAgoET, ...params) as { refcode: string; total_revenue: number; revenue_72h: number; revenue_24h: number; revenue_prev_24h: number }[];
@@ -214,7 +214,7 @@ export async function GET(request: NextRequest) {
         SUM(CASE WHEN a.date >= ? THEN a.results ELSE 0 END) as results_72h
       FROM ad_spend a
       JOIN clients c ON c.id = a.client_id
-      WHERE c.active = 1 ${clientWhere}
+      WHERE c.active = 1 AND c.is_ad_client = 1 ${clientWhere}
       GROUP BY a.ad_name, c.name, c.short_code, c.fee_rate
     `).all(threeDaysAgoET, threeDaysAgoET, ...params) as { ad_name: string; client_name: string; short_code: string; fee_rate: number; campaign_type: string; total_spend: number; spend_72h: number; total_results: number; results_72h: number }[];
 
