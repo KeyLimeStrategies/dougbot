@@ -423,14 +423,11 @@ function detectRealChanges(
 
       const prev = getPrevBudget.get(campaign.id) as { daily_budget: number | null; lifetime_budget: number | null } | undefined;
 
-      if (prev && prev.daily_budget && currentDaily) {
-        const changeRatio = currentDaily / prev.daily_budget;
-        if (changeRatio > 1.15 || changeRatio < 0.85) {
-          const dir = changeRatio > 1 ? 'up' : 'down';
-          const pct = Math.round(Math.abs(changeRatio - 1) * 100);
-          insertChange.run(todayET, client.id, 'budget_change',
-            `${campaign.name} daily budget ${dir} ${pct}% ($${prev.daily_budget.toFixed(0)} → $${currentDaily.toFixed(0)})`);
-        }
+      if (prev && prev.daily_budget && currentDaily && currentDaily !== prev.daily_budget) {
+        const dir = currentDaily > prev.daily_budget ? 'up' : 'down';
+        const pct = Math.round(Math.abs(currentDaily / prev.daily_budget - 1) * 100);
+        insertChange.run(todayET, client.id, 'budget_change',
+          `${campaign.name} daily budget ${dir} ${pct}% ($${prev.daily_budget.toFixed(0)} → $${currentDaily.toFixed(0)})`);
       }
 
       upsertBudget.run(campaign.id, campaign.name, client.id, currentDaily, currentLifetime);
