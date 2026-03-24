@@ -406,7 +406,9 @@ export async function syncActivityLog(since?: string): Promise<number> {
         const changeType = eventTypeMap[event.event_type];
         if (!changeType) continue; // Skip event types we don't care about
 
-        const eventDate = new Date(event.event_time).toISOString().split('T')[0];
+        // Convert event_time to Eastern Time date
+        const eventDt = new Date(event.event_time);
+        const eventDate = eventDt.toLocaleDateString('en-CA', { timeZone: 'America/New_York' }); // YYYY-MM-DD format
         const objectName = event.object_name || '';
 
         // Try to match to a client (ad name prefix first, then campaign name matching)
@@ -420,17 +422,19 @@ export async function syncActivityLog(since?: string): Promise<number> {
             const extra = typeof event.extra_data === 'string' ? JSON.parse(event.extra_data) : event.extra_data;
 
             if (changeType === 'budget_change') {
-              const oldVal = extra.old_value || extra.old_val;
-              const newVal = extra.new_value || extra.new_val;
-              if (oldVal && newVal) {
-                // Budget values from activity log are in cents
-                const oldBudget = parseFloat(oldVal) / 100;
-                const newBudget = parseFloat(newVal) / 100;
+              // Meta returns nested structure: extra.old_value.old_value and extra.new_value.new_value (in cents)
+              const oldObj = extra.old_value;
+              const newObj = extra.new_value;
+              const oldCents = typeof oldObj === 'object' ? (oldObj?.old_value ?? oldObj?.value) : oldObj;
+              const newCents = typeof newObj === 'object' ? (newObj?.new_value ?? newObj?.value) : newObj;
+              if (oldCents != null && newCents != null && !isNaN(oldCents) && !isNaN(newCents)) {
+                const oldBudget = parseFloat(oldCents) / 100;
+                const newBudget = parseFloat(newCents) / 100;
                 const dir = newBudget > oldBudget ? 'up' : 'down';
                 const pct = oldBudget > 0 ? Math.round(Math.abs(newBudget / oldBudget - 1) * 100) : 0;
                 description = `${objectName} budget ${dir} ${pct}% ($${oldBudget.toFixed(0)} → $${newBudget.toFixed(0)})`;
               } else {
-                description = `${objectName}: ${event.event_type.replace(/_/g, ' ')}`;
+                description = `${objectName}: budget changed`;
               }
             } else if (changeType === 'status_change') {
               const oldVal = extra.old_value || extra.old_val || '';
