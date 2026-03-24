@@ -250,13 +250,21 @@ export function getClientByCampaignName(campaignName: string): { id: number; sho
   return null;
 }
 
-export function getCampaignType(adName: string): string {
+export function getCampaignType(adName: string, campaignName?: string): string {
   // Extract campaign type from ad name after the underscore pattern
   // Examples: mk4_1_1.val -> val, ef1s_1_1.abx20.26 -> abx20, MC-11_4_1_v2.mp4 -> mp4
   const known = ['val', 'cap', 'abx20', 'num'];
   const lower = adName.toLowerCase();
   for (const type of known) {
     if (lower.includes(`.${type}`)) return type;
+  }
+  // Fallback: infer from Meta campaign name (e.g. "Gay ValueOfConversions" -> val)
+  if (campaignName) {
+    const cLower = campaignName.toLowerCase();
+    if (cLower.includes('numberofconversions')) return 'num';
+    if (cLower.includes('valueofconversions')) return 'val';
+    if (cLower.includes('costcap')) return 'cap';
+    if (cLower.includes('abx')) return 'abx20';
   }
   // No recognized type, default to val (most common campaign type)
   return 'val';

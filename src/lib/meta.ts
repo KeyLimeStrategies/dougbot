@@ -203,7 +203,7 @@ export async function syncMetaAds(dateStart: string, dateEnd: string): Promise<M
         delivery.toLowerCase(),
         '7-day click', // default attribution
         costPerResult,
-        getCampaignType(adName),
+        getCampaignType(adName, ad.campaign_name),
         parseBatch(adName)
       );
       adsProcessed++;
