@@ -229,6 +229,27 @@ export function getClientByAdName(adName: string): { id: number; short_code: str
   return null;
 }
 
+// Match a Meta campaign/adset name to a client (e.g. "Earle Ford ValueOfConversions" → Ford)
+export function getClientByCampaignName(campaignName: string): { id: number; short_code: string; name: string } | null {
+  const db = getDb();
+  const clients = db.prepare('SELECT id, short_code, name, entity_name FROM clients').all() as { id: number; short_code: string; name: string; entity_name: string | null }[];
+
+  const lower = campaignName.toLowerCase();
+  for (const client of clients) {
+    // Check if campaign name contains the client's display name (e.g. "Ford", "Kinter")
+    if (lower.includes(client.name.toLowerCase())) return client;
+    // Check entity name words (e.g. "Earle Ford" from "Earle Ford for Congress")
+    if (client.entity_name) {
+      const entityWords = client.entity_name.toLowerCase().split(/\s+/);
+      // Match on first+last name or just last name (skip common words)
+      const skip = new Set(['for', 'congress', 'pac', 'of', 'the', 'us', 'house', 'representatives']);
+      const nameWords = entityWords.filter(w => !skip.has(w) && w.length > 2);
+      if (nameWords.length > 0 && nameWords.some(w => lower.includes(w))) return client;
+    }
+  }
+  return null;
+}
+
 export function getCampaignType(adName: string): string {
   // Extract campaign type from ad name after the underscore pattern
   // Examples: mk4_1_1.val -> val, ef1s_1_1.abx20.26 -> abx20, MC-11_4_1_v2.mp4 -> mp4

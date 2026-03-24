@@ -1,4 +1,4 @@
-import { getDb, getClientByAdName, getCampaignType, parseBatch } from './db';
+import { getDb, getClientByAdName, getClientByCampaignName, getCampaignType, parseBatch } from './db';
 
 const GRAPH_API_BASE = 'https://graph.facebook.com/v22.0';
 
@@ -410,8 +410,8 @@ export async function syncActivityLog(since?: string): Promise<number> {
         const eventDate = new Date(event.event_time).toISOString().split('T')[0];
         const objectName = event.object_name || '';
 
-        // Try to match to a client
-        const client = getClientByAdName(objectName);
+        // Try to match to a client (ad name prefix first, then campaign name matching)
+        const client = getClientByAdName(objectName) || getClientByCampaignName(objectName);
         if (!client) continue;
 
         // Build description from extra_data
