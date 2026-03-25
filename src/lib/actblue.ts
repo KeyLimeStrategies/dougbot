@@ -91,6 +91,26 @@ export async function testActBlueCredentials(clientUuid: string, clientSecret: s
   return res.ok || res.status === 202;
 }
 
+// Retry wrapper for transient errors (503, 502, network issues)
+async function fetchWithRetry(
+  url: string,
+  options: RequestInit,
+  maxRetries = 3,
+  baseDelayMs = 5000
+): Promise<Response> {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const res = await fetch(url, options);
+    if (res.ok || res.status === 202) return res;
+    if ((res.status === 502 || res.status === 503) && attempt < maxRetries) {
+      const delay = baseDelayMs * Math.pow(2, attempt); // 5s, 10s, 20s
+      await new Promise(resolve => setTimeout(resolve, delay));
+      continue;
+    }
+    return res; // Return the failed response for error handling
+  }
+  throw new Error('fetchWithRetry: exhausted retries');
+}
+
 // Request a CSV generation from ActBlue
 async function requestCsv(
   creds: ActBlueCredentials,
@@ -100,7 +120,7 @@ async function requestCsv(
 ): Promise<string> {
   const auth = Buffer.from(`${creds.clientUuid}:${creds.clientSecret}`).toString('base64');
 
-  const res = await fetch(`${ACTBLUE_API_BASE}/csvs`, {
+  const res = await fetchWithRetry(`${ACTBLUE_API_BASE}/csvs`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -132,9 +152,9 @@ async function pollForDownload(
   const auth = Buffer.from(`${creds.clientUuid}:${creds.clientSecret}`).toString('base64');
 
   for (let i = 0; i < maxAttempts; i++) {
-    const res = await fetch(`${ACTBLUE_API_BASE}/csvs/${csvId}`, {
+    const res = await fetchWithRetry(`${ACTBLUE_API_BASE}/csvs/${csvId}`, {
       headers: { 'Authorization': `Basic ${auth}` },
-    });
+    }, 2, 3000);
 
     if (!res.ok) {
       throw new Error(`ActBlue poll failed (${res.status})`);
@@ -158,7 +178,7 @@ async function pollForDownload(
 
 // Download the CSV content
 async function downloadCsv(url: string): Promise<string> {
-  const res = await fetch(url);
+  const res = await fetchWithRetry(url, {}, 3, 5000);
   if (!res.ok) {
     throw new Error(`Failed to download ActBlue CSV (${res.status})`);
   }
