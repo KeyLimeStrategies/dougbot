@@ -213,20 +213,32 @@ export async function syncMetaAds(dateStart: string, dateEnd: string): Promise<M
             date, metaAdId
           );
         } else {
-          try {
+          // Check if there's an old row without meta_ad_id for the same (date, ad_name)
+          // If so, adopt it by updating and setting the meta_ad_id
+          const oldRow = db.prepare(
+            'SELECT id FROM ad_spend WHERE date = ? AND ad_name = ? AND meta_ad_id IS NULL LIMIT 1'
+          ).get(date, adName) as { id: number } | undefined;
+
+          if (oldRow) {
+            // Adopt the old row: update it and stamp with meta_ad_id
+            db.prepare(`
+              UPDATE ad_spend SET
+                meta_ad_id = ?, spend = ?, results = ?, reach = ?, frequency = ?,
+                impressions = ?, cpm = ?, link_clicks = ?, ctr = ?,
+                ad_delivery = ?, cost_per_result = ?, campaign_type = ?, batch = ?
+              WHERE id = ?
+            `).run(
+              metaAdId, spend, purchases, reach, frequency, impressions, cpm, linkClicks, ctr,
+              delivery.toLowerCase(), costPerResult, campaignType, batch,
+              oldRow.id
+            );
+          } else {
+            // Truly new row (different ad_id, possibly same name from different campaign)
             insertWithMetaId.run(
               date, client.id, adName, metaAdId,
               spend, purchases, reach, frequency, impressions, cpm, linkClicks, ctr,
               delivery.toLowerCase(), '7-day click', costPerResult, campaignType, batch
             );
-          } catch {
-            // If insert fails (shouldn't happen after migration), update by name and set meta_ad_id
-            updateByName.run(
-              spend, purchases, reach, frequency, impressions, cpm, linkClicks, ctr,
-              delivery.toLowerCase(), costPerResult, campaignType, batch,
-              date, adName
-            );
-            db.prepare('UPDATE ad_spend SET meta_ad_id = ? WHERE date = ? AND ad_name = ? AND meta_ad_id IS NULL').run(metaAdId, date, adName);
           }
         }
       } else {
