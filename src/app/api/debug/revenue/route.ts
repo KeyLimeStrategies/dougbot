@@ -9,12 +9,12 @@ export async function GET(request: NextRequest) {
 
   // Get all revenue rows for this client on this date
   const rows = db.prepare(`
-    SELECT r.date, r.refcode, r.amount, r.fundraising_page, r.receipt_id, r.donor_name
+    SELECT r.date, r.refcode, r.amount, r.fundraising_page, r.receipt_id, r.donor_name, r.recurrence_number
     FROM revenue r
     JOIN clients c ON c.id = r.client_id
     WHERE c.short_code = ? AND r.date = ?
     ORDER BY r.amount DESC
-  `).all(client, date) as { date: string; refcode: string; amount: number; fundraising_page: string; receipt_id: string; donor_name: string }[];
+  `).all(client, date) as { date: string; refcode: string; amount: number; fundraising_page: string; receipt_id: string; donor_name: string; recurrence_number: number }[];
 
   const fbigRows = rows.filter(r => r.fundraising_page && r.fundraising_page.includes('fbig'));
   const nonFbigRows = rows.filter(r => !r.fundraising_page || !r.fundraising_page.includes('fbig'));
@@ -28,7 +28,11 @@ export async function GET(request: NextRequest) {
     fbig_amount: fbigRows.reduce((s, r) => s + r.amount, 0),
     non_fbig_count: nonFbigRows.length,
     non_fbig_amount: nonFbigRows.reduce((s, r) => s + r.amount, 0),
-    fbig_rows: fbigRows.map(r => ({ amount: r.amount, page: r.fundraising_page, refcode: r.refcode, donor: r.donor_name })),
-    non_fbig_rows: nonFbigRows.map(r => ({ amount: r.amount, page: r.fundraising_page, refcode: r.refcode, donor: r.donor_name })),
+    recurring_count: rows.filter(r => r.recurrence_number > 1).length,
+    recurring_amount: rows.filter(r => r.recurrence_number > 1).reduce((s, r) => s + r.amount, 0),
+    first_time_count: rows.filter(r => r.recurrence_number === 1).length,
+    first_time_amount: rows.filter(r => r.recurrence_number === 1).reduce((s, r) => s + r.amount, 0),
+    fbig_rows: fbigRows.map(r => ({ amount: r.amount, page: r.fundraising_page, refcode: r.refcode, donor: r.donor_name, recurrence: r.recurrence_number })),
+    non_fbig_rows: nonFbigRows.map(r => ({ amount: r.amount, page: r.fundraising_page, refcode: r.refcode, donor: r.donor_name, recurrence: r.recurrence_number })),
   });
 }
