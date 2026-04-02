@@ -29,8 +29,12 @@ export interface AdPerformance {
   attribution_setting: string;
   total_spend: number;
   spend_3d: number;
+  spend_7d: number;
+  spend_14d: number;
   total_results: number;
   results_3d: number;
+  results_7d: number;
+  results_14d: number;
   cpp: number;
   cpp_3d: number;
   frequency: number;

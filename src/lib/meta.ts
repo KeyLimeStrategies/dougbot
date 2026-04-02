@@ -171,7 +171,7 @@ export async function syncMetaAds(dateStart: string, dateEnd: string): Promise<M
       const adName = ad.ad_name;
       if (!adName) continue;
 
-      const client = getClientByAdName(adName);
+      const client = getClientByAdName(adName) || (ad.campaign_name ? getClientByCampaignName(ad.campaign_name) : null);
       if (!client) continue;
 
       const spend = parseFloat(ad.spend || '0');

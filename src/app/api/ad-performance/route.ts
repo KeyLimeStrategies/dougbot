@@ -39,6 +39,9 @@ export async function GET(request: NextRequest) {
     const sevenDaysAgo = new Date(nowET);
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
     const sevenDaysAgoET = sevenDaysAgo.toISOString().split('T')[0];
+    const fourteenDaysAgo = new Date(nowET);
+    fourteenDaysAgo.setDate(fourteenDaysAgo.getDate() - 14);
+    const fourteenDaysAgoET = fourteenDaysAgo.toISOString().split('T')[0];
 
     let clientWhere = '';
     const params: string[] = [];
@@ -60,8 +63,12 @@ export async function GET(request: NextRequest) {
         MAX(a.attribution_setting) as attribution_setting,
         SUM(a.spend) as total_spend,
         SUM(CASE WHEN a.date >= ? THEN a.spend ELSE 0 END) as spend_3d,
+        SUM(CASE WHEN a.date >= ? THEN a.spend ELSE 0 END) as spend_7d,
+        SUM(CASE WHEN a.date >= ? THEN a.spend ELSE 0 END) as spend_14d,
         SUM(a.results) as total_results,
         SUM(CASE WHEN a.date >= ? THEN a.results ELSE 0 END) as results_3d,
+        SUM(CASE WHEN a.date >= ? THEN a.results ELSE 0 END) as results_7d,
+        SUM(CASE WHEN a.date >= ? THEN a.results ELSE 0 END) as results_14d,
         MAX(a.frequency) as frequency,
         MIN(a.date) as first_seen,
         MAX(a.date) as last_seen,
@@ -75,7 +82,7 @@ export async function GET(request: NextRequest) {
       WHERE c.active = 1 AND c.is_ad_client = 1 ${clientWhere}
       GROUP BY a.ad_name, c.name, c.short_code, c.fee_rate
       ORDER BY total_spend DESC
-    `).all(threeDaysAgoET, threeDaysAgoET, oneDayAgoET, twoDaysAgoET, oneDayAgoET, oneDayAgoET, twoDaysAgoET, oneDayAgoET, ...params) as (AdPerformance & { fee_rate: number; first_seen: string; last_seen: string; days_with_data: number; spend_24h: number; spend_prev_24h: number; results_24h: number; results_prev_24h: number })[];
+    `).all(threeDaysAgoET, sevenDaysAgoET, fourteenDaysAgoET, threeDaysAgoET, sevenDaysAgoET, fourteenDaysAgoET, oneDayAgoET, twoDaysAgoET, oneDayAgoET, oneDayAgoET, twoDaysAgoET, oneDayAgoET, ...params) as (AdPerformance & { fee_rate: number; first_seen: string; last_seen: string; days_with_data: number; spend_24h: number; spend_prev_24h: number; results_24h: number; results_prev_24h: number; spend_7d: number; spend_14d: number; results_7d: number; results_14d: number })[];
 
     // Get ActBlue revenue per refcode (ad name) for KILL decisions
     const revenueRows = db.prepare(`
@@ -184,8 +191,12 @@ export async function GET(request: NextRequest) {
         attribution_setting: ad.attribution_setting,
         total_spend: ad.total_spend,
         spend_3d: ad.spend_3d,
+        spend_7d: (ad as any).spend_7d ?? 0,
+        spend_14d: (ad as any).spend_14d ?? 0,
         total_results: ad.total_results,
         results_3d: ad.results_3d,
+        results_7d: (ad as any).results_7d ?? 0,
+        results_14d: (ad as any).results_14d ?? 0,
         cpp: cpp === Infinity ? 0 : cpp,
         cpp_3d: cpp3d === Infinity ? 0 : cpp3d,
         frequency: ad.frequency,

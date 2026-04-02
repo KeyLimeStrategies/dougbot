@@ -379,25 +379,55 @@ function AdChart({ adName }: { adName: string }) {
 
 function CampaignAdsTable({ ads, campaign, fmt, hidePaused }: { ads: AdPerf[]; campaign: CampaignPerformance; fmt: (n: number) => string; hidePaused: boolean }) {
   const [expandedAd, setExpandedAd] = useState<string | null>(null);
+  const [period, setPeriod] = useState<'all' | '3d' | '7d' | '14d'>('all');
 
   const adSet = new Set(campaign.ads);
   const allCampaignAds = ads.filter(a => adSet.has(a.ad_name));
   const campaignAds = (hidePaused
     ? allCampaignAds.filter(a => a.ad_delivery === 'active' || a.ad_delivery === '')
     : allCampaignAds
-  ).sort((a, b) => b.total_spend - a.total_spend);
+  ).sort((a, b) => {
+    const spendA = period === '3d' ? a.spend_3d : period === '7d' ? (a as any).spend_7d : period === '14d' ? (a as any).spend_14d : a.total_spend;
+    const spendB = period === '3d' ? b.spend_3d : period === '7d' ? (b as any).spend_7d : period === '14d' ? (b as any).spend_14d : b.total_spend;
+    return (spendB ?? 0) - (spendA ?? 0);
+  });
+
+  const getSpend = (ad: AdPerf) => {
+    if (period === '3d') return ad.spend_3d;
+    if (period === '7d') return (ad as any).spend_7d ?? 0;
+    if (period === '14d') return (ad as any).spend_14d ?? 0;
+    return ad.total_spend;
+  };
+  const getResults = (ad: AdPerf) => {
+    if (period === '3d') return ad.results_3d;
+    if (period === '7d') return (ad as any).results_7d ?? 0;
+    if (period === '14d') return (ad as any).results_14d ?? 0;
+    return ad.total_results;
+  };
 
   return (
     <div className="border-t border-gray-800/50 px-4 py-2">
+      <div className="flex items-center gap-2 mb-2">
+        <span className="text-[10px] text-gray-500 uppercase">Period</span>
+        {(['3d', '7d', '14d', 'all'] as const).map(p => (
+          <button
+            key={p}
+            onClick={() => setPeriod(p)}
+            className={`px-2 py-0.5 text-[10px] rounded ${period === p ? 'bg-lime-500 text-black' : 'bg-gray-800 text-gray-500 hover:bg-gray-700'}`}
+          >
+            {p === 'all' ? 'All' : p.toUpperCase()}
+          </button>
+        ))}
+      </div>
       <table className="w-full text-xs">
         <thead>
           <tr className="text-gray-600 uppercase">
             <th className="w-5 py-1 px-1"></th>
             <th className="text-left py-1 px-1">Ad</th>
-            <th className="text-right py-1 px-1">Spend</th>
+            <th className="text-right py-1 px-1">Spend{period !== 'all' ? ` (${period})` : ''}</th>
             <th className="text-right py-1 px-1">AB Rev</th>
             <th className="text-right py-1 px-1">ROI</th>
-            <th className="text-right py-1 px-1">Results</th>
+            <th className="text-right py-1 px-1"># Contributions{period !== 'all' ? ` (${period})` : ''}</th>
             <th className="text-right py-1 px-1">CPP</th>
             <th className="text-right py-1 px-1">Freq</th>
             <th className="text-center py-1 px-1">24h</th>
@@ -408,7 +438,8 @@ function CampaignAdsTable({ ads, campaign, fmt, hidePaused }: { ads: AdPerf[]; c
         <tbody>
           {campaignAds.map(ad => (
             <AdRow key={ad.ad_name} ad={ad} fmt={fmt} expanded={expandedAd === ad.ad_name}
-              onToggle={() => setExpandedAd(expandedAd === ad.ad_name ? null : ad.ad_name)} />
+              onToggle={() => setExpandedAd(expandedAd === ad.ad_name ? null : ad.ad_name)}
+              periodSpend={getSpend(ad)} periodResults={getResults(ad)} />
           ))}
         </tbody>
       </table>
@@ -416,7 +447,9 @@ function CampaignAdsTable({ ads, campaign, fmt, hidePaused }: { ads: AdPerf[]; c
   );
 }
 
-function AdRow({ ad, fmt, expanded, onToggle }: { ad: AdPerf; fmt: (n: number) => string; expanded: boolean; onToggle: () => void }) {
+function AdRow({ ad, fmt, expanded, onToggle, periodSpend, periodResults }: { ad: AdPerf; fmt: (n: number) => string; expanded: boolean; onToggle: () => void; periodSpend?: number; periodResults?: number }) {
+  const spend = periodSpend ?? ad.total_spend;
+  const results = periodResults ?? ad.total_results;
   return (
     <>
       <tr className={`border-t border-gray-800/30 ${ad.recommendation === 'KILL' ? 'text-red-400/80' : ''} cursor-pointer hover:bg-gray-800/30`} onClick={onToggle}>
@@ -424,16 +457,16 @@ function AdRow({ ad, fmt, expanded, onToggle }: { ad: AdPerf; fmt: (n: number) =
           <BarChart3 size={10} className={expanded ? 'text-lime-400' : ''} />
         </td>
         <td className="py-1 px-1 text-gray-300 font-mono">{ad.ad_name}</td>
-        <td className="py-1 px-1 text-right text-gray-300">{fmt(ad.total_spend)}</td>
+        <td className="py-1 px-1 text-right text-gray-300">{fmt(spend)}</td>
         <td className={`py-1 px-1 text-right font-mono ${ad.actblue_revenue > 0 ? 'text-green-400' : 'text-gray-600'}`}>
           {ad.actblue_revenue > 0 ? fmt(ad.actblue_revenue) : '$0'}
         </td>
         <td className={`py-1 px-1 text-right font-mono font-medium ${ad.roi >= 1.3 ? 'text-green-400' : ad.roi > 0 && ad.roi < 1.0 ? 'text-red-400' : ad.roi >= 1.0 ? 'text-yellow-400' : 'text-gray-600'}`}>
           {ad.roi > 0 ? `${ad.roi.toFixed(2)}x` : '-'}
         </td>
-        <td className="py-1 px-1 text-right text-gray-300">{ad.total_results}</td>
-        <td className={`py-1 px-1 text-right font-mono ${ad.cpp > 40 ? 'text-red-400' : ad.cpp < 25 && ad.cpp > 0 ? 'text-green-400' : 'text-gray-300'}`}>
-          {ad.cpp > 0 ? fmt(ad.cpp) : '-'}
+        <td className="py-1 px-1 text-right text-gray-300">{results}</td>
+        <td className={`py-1 px-1 text-right font-mono ${(results > 0 ? spend / results : 0) > 40 ? 'text-red-400' : (results > 0 ? spend / results : 0) < 25 && results > 0 ? 'text-green-400' : 'text-gray-300'}`}>
+          {results > 0 ? fmt(spend / results) : '-'}
         </td>
         <td className={`py-1 px-1 text-right ${ad.frequency > 2.0 ? 'text-red-400' : 'text-gray-400'}`}>
           {ad.frequency.toFixed(2)}

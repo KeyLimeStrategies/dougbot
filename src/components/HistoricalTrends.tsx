@@ -74,7 +74,16 @@ export default function HistoricalTrends({ refreshKey }: { refreshKey: number })
     });
   };
 
-  const showAllClients = () => setHiddenClients(new Set());
+  const toggleAllClients = () => {
+    if (hiddenClients.size === 0) {
+      // All visible: hide all
+      const allClients = [...new Set(data.map(d => d.short_code))];
+      setHiddenClients(new Set(allClients));
+    } else {
+      // Some hidden: show all
+      setHiddenClients(new Set());
+    }
+  };
   const showOnlyClient = (code: string) => {
     const allClients = [...new Set(data.map(d => d.short_code))];
     setHiddenClients(new Set(allClients.filter(c => c !== code)));
@@ -224,7 +233,7 @@ export default function HistoricalTrends({ refreshKey }: { refreshKey: number })
       {clients.length > 0 && (
         <div className="flex items-center gap-1.5 mb-4 flex-wrap">
           <button
-            onClick={showAllClients}
+            onClick={toggleAllClients}
             className={`px-2 py-1 text-xs rounded border transition-colors ${
               hiddenClients.size === 0
                 ? 'bg-gray-700 border-gray-600 text-white'
