@@ -123,6 +123,20 @@ function initializeSchema(db: Database.Database) {
     // Column already exists
   }
 
+  // Add meta_ad_id to ad_spend for proper dedup across campaigns
+  try {
+    db.exec(`ALTER TABLE ad_spend ADD COLUMN meta_ad_id TEXT`);
+  } catch {
+    // Column already exists
+  }
+
+  // Create unique index on (date, meta_ad_id) for API-synced data
+  try {
+    db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_ad_spend_date_meta_id ON ad_spend(date, meta_ad_id) WHERE meta_ad_id IS NOT NULL`);
+  } catch {
+    // Index already exists
+  }
+
   // Add is_ad_client column (1 = runs ads, 0 = non-ad client like text/email only)
   try {
     db.exec(`ALTER TABLE clients ADD COLUMN is_ad_client INTEGER NOT NULL DEFAULT 1`);

@@ -146,7 +146,28 @@ export async function syncMetaAds(dateStart: string, dateEnd: string): Promise<M
     statusMap.set(s.id, s.effective_status);
   }
 
-  const upsertAdSpend = db.prepare(`
+  // Upsert using meta_ad_id when available (prevents overwriting across campaigns with same ad names)
+  const upsertByMetaId = db.prepare(`
+    INSERT INTO ad_spend (date, client_id, ad_name, meta_ad_id, spend, results, reach, frequency, impressions, cpm, link_clicks, ctr, ad_delivery, attribution_setting, cost_per_result, campaign_type, batch)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(date, meta_ad_id) DO UPDATE SET
+      spend = excluded.spend,
+      results = excluded.results,
+      reach = excluded.reach,
+      frequency = excluded.frequency,
+      impressions = excluded.impressions,
+      cpm = excluded.cpm,
+      link_clicks = excluded.link_clicks,
+      ctr = excluded.ctr,
+      ad_delivery = excluded.ad_delivery,
+      cost_per_result = excluded.cost_per_result,
+      campaign_type = excluded.campaign_type,
+      batch = excluded.batch,
+      ad_name = excluded.ad_name
+  `);
+
+  // Fallback for CSV imports (no meta_ad_id)
+  const upsertByName = db.prepare(`
     INSERT INTO ad_spend (date, client_id, ad_name, spend, results, reach, frequency, impressions, cpm, link_clicks, ctr, ad_delivery, attribution_setting, cost_per_result, campaign_type, batch)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(date, ad_name) DO UPDATE SET
@@ -185,27 +206,25 @@ export async function syncMetaAds(dateStart: string, dateEnd: string): Promise<M
       const costPerResult = purchases > 0 ? spend / purchases : 0;
 
       const date = ad.date_start;
+      const metaAdId = ad.ad_id || null;
       // Use real effective_status from API if available
       const delivery = statusMap.get(ad.ad_id) || 'active';
+      const campaignType = getCampaignType(adName, ad.campaign_name);
+      const batch = parseBatch(adName);
 
-      upsertAdSpend.run(
-        date,
-        client.id,
-        adName,
-        spend,
-        purchases,
-        reach,
-        frequency,
-        impressions,
-        cpm,
-        linkClicks,
-        ctr,
-        delivery.toLowerCase(),
-        '7-day click', // default attribution
-        costPerResult,
-        getCampaignType(adName, ad.campaign_name),
-        parseBatch(adName)
-      );
+      if (metaAdId) {
+        upsertByMetaId.run(
+          date, client.id, adName, metaAdId,
+          spend, purchases, reach, frequency, impressions, cpm, linkClicks, ctr,
+          delivery.toLowerCase(), '7-day click', costPerResult, campaignType, batch
+        );
+      } else {
+        upsertByName.run(
+          date, client.id, adName,
+          spend, purchases, reach, frequency, impressions, cpm, linkClicks, ctr,
+          delivery.toLowerCase(), '7-day click', costPerResult, campaignType, batch
+        );
+      }
       adsProcessed++;
     }
   });
