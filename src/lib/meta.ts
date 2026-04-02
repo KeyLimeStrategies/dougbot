@@ -146,24 +146,20 @@ export async function syncMetaAds(dateStart: string, dateEnd: string): Promise<M
     statusMap.set(s.id, s.effective_status);
   }
 
-  // Upsert using meta_ad_id when available (prevents overwriting across campaigns with same ad names)
-  const upsertByMetaId = db.prepare(`
+  // Check if a row exists by meta_ad_id for a given date
+  const findByMetaId = db.prepare(
+    'SELECT id FROM ad_spend WHERE date = ? AND meta_ad_id = ?'
+  );
+  const updateByMetaId = db.prepare(`
+    UPDATE ad_spend SET
+      ad_name = ?, spend = ?, results = ?, reach = ?, frequency = ?,
+      impressions = ?, cpm = ?, link_clicks = ?, ctr = ?,
+      ad_delivery = ?, cost_per_result = ?, campaign_type = ?, batch = ?
+    WHERE date = ? AND meta_ad_id = ?
+  `);
+  const insertWithMetaId = db.prepare(`
     INSERT INTO ad_spend (date, client_id, ad_name, meta_ad_id, spend, results, reach, frequency, impressions, cpm, link_clicks, ctr, ad_delivery, attribution_setting, cost_per_result, campaign_type, batch)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(date, meta_ad_id) DO UPDATE SET
-      spend = excluded.spend,
-      results = excluded.results,
-      reach = excluded.reach,
-      frequency = excluded.frequency,
-      impressions = excluded.impressions,
-      cpm = excluded.cpm,
-      link_clicks = excluded.link_clicks,
-      ctr = excluded.ctr,
-      ad_delivery = excluded.ad_delivery,
-      cost_per_result = excluded.cost_per_result,
-      campaign_type = excluded.campaign_type,
-      batch = excluded.batch,
-      ad_name = excluded.ad_name
   `);
 
   // Fallback for CSV imports (no meta_ad_id)
@@ -213,11 +209,31 @@ export async function syncMetaAds(dateStart: string, dateEnd: string): Promise<M
       const batch = parseBatch(adName);
 
       if (metaAdId) {
-        upsertByMetaId.run(
-          date, client.id, adName, metaAdId,
-          spend, purchases, reach, frequency, impressions, cpm, linkClicks, ctr,
-          delivery.toLowerCase(), '7-day click', costPerResult, campaignType, batch
-        );
+        // Check if this specific ad (by meta_ad_id) already has a row for this date
+        const existing = findByMetaId.get(date, metaAdId) as { id: number } | undefined;
+        if (existing) {
+          updateByMetaId.run(
+            adName, spend, purchases, reach, frequency, impressions, cpm, linkClicks, ctr,
+            delivery.toLowerCase(), costPerResult, campaignType, batch,
+            date, metaAdId
+          );
+        } else {
+          try {
+            insertWithMetaId.run(
+              date, client.id, adName, metaAdId,
+              spend, purchases, reach, frequency, impressions, cpm, linkClicks, ctr,
+              delivery.toLowerCase(), '7-day click', costPerResult, campaignType, batch
+            );
+          } catch {
+            // If ad_name conflict (old CSV data), update it and add meta_ad_id
+            upsertByName.run(
+              date, client.id, adName,
+              spend, purchases, reach, frequency, impressions, cpm, linkClicks, ctr,
+              delivery.toLowerCase(), '7-day click', costPerResult, campaignType, batch
+            );
+            db.prepare('UPDATE ad_spend SET meta_ad_id = ? WHERE date = ? AND ad_name = ?').run(metaAdId, date, adName);
+          }
+        }
       } else {
         upsertByName.run(
           date, client.id, adName,

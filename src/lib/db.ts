@@ -130,9 +130,9 @@ function initializeSchema(db: Database.Database) {
     // Column already exists
   }
 
-  // Create unique index on (date, meta_ad_id) for API-synced data
+  // Index for fast lookups by (date, meta_ad_id)
   try {
-    db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_ad_spend_date_meta_id ON ad_spend(date, meta_ad_id) WHERE meta_ad_id IS NOT NULL`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_ad_spend_date_meta_id ON ad_spend(date, meta_ad_id)`);
   } catch {
     // Index already exists
   }
