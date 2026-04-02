@@ -47,23 +47,18 @@ export function parseMetaCsv(csvText: string, filename: string): { rowsProcessed
     errors.push(...parsed.errors.map(e => `Row ${e.row}: ${e.message}`));
   }
 
-  const upsertAdSpend = db.prepare(`
+  // CSV imports don't have meta_ad_id, so check-then-update/insert by (date, ad_name)
+  const findByNameCsv = db.prepare('SELECT id FROM ad_spend WHERE date = ? AND ad_name = ? AND meta_ad_id IS NULL LIMIT 1');
+  const updateByNameCsv = db.prepare(`
+    UPDATE ad_spend SET
+      spend = ?, results = ?, reach = ?, frequency = ?,
+      impressions = ?, cpm = ?, link_clicks = ?, ctr = ?,
+      ad_delivery = ?, attribution_setting = ?, cost_per_result = ?, campaign_type = ?, batch = ?
+    WHERE id = ?
+  `);
+  const insertByNameCsv = db.prepare(`
     INSERT INTO ad_spend (date, client_id, ad_name, spend, results, reach, frequency, impressions, cpm, link_clicks, ctr, ad_delivery, attribution_setting, cost_per_result, campaign_type, batch)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(date, ad_name) DO UPDATE SET
-      spend = excluded.spend,
-      results = excluded.results,
-      reach = excluded.reach,
-      frequency = excluded.frequency,
-      impressions = excluded.impressions,
-      cpm = excluded.cpm,
-      link_clicks = excluded.link_clicks,
-      ctr = excluded.ctr,
-      ad_delivery = excluded.ad_delivery,
-      attribution_setting = excluded.attribution_setting,
-      cost_per_result = excluded.cost_per_result,
-      campaign_type = excluded.campaign_type,
-      batch = excluded.batch
   `);
 
   let rowsProcessed = 0;
@@ -124,24 +119,24 @@ export function parseMetaCsv(csvText: string, filename: string): { rowsProcessed
       const dailyLinkClicks = Math.round(linkClicks / numDays);
 
       for (const date of dates) {
-        upsertAdSpend.run(
-          date,
-          client.id,
-          adName,
-          dailySpend,
-          dailyResults,
-          Math.round(reach / numDays),
-          frequency,
-          dailyImpressions,
-          cpm,
-          dailyLinkClicks,
-          ctr,
-          row['Ad delivery'] || '',
-          row['Attribution setting'] || '',
-          costPerResult,
-          getCampaignType(adName),
-          parseBatch(adName)
-        );
+        const existingCsv = findByNameCsv.get(date, adName) as { id: number } | undefined;
+        if (existingCsv) {
+          updateByNameCsv.run(
+            dailySpend, dailyResults, Math.round(reach / numDays), frequency,
+            dailyImpressions, cpm, dailyLinkClicks, ctr,
+            row['Ad delivery'] || '', row['Attribution setting'] || '',
+            costPerResult, getCampaignType(adName), parseBatch(adName),
+            existingCsv.id
+          );
+        } else {
+          insertByNameCsv.run(
+            date, client.id, adName,
+            dailySpend, dailyResults, Math.round(reach / numDays), frequency,
+            dailyImpressions, cpm, dailyLinkClicks, ctr,
+            row['Ad delivery'] || '', row['Attribution setting'] || '',
+            costPerResult, getCampaignType(adName), parseBatch(adName)
+          );
+        }
       }
       rowsProcessed++;
     }

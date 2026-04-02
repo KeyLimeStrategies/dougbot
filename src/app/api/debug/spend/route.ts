@@ -10,7 +10,7 @@ export async function GET(request: NextRequest) {
 
     // Get all ad_spend rows for this client on this date
     const rows = db.prepare(`
-      SELECT a.date, a.ad_name, a.spend, a.results, a.frequency, a.ad_delivery,
+      SELECT a.date, a.ad_name, a.meta_ad_id, a.spend, a.results, a.frequency, a.ad_delivery,
              a.campaign_type, a.batch, a.attribution_setting,
              c.name as client_name, c.short_code
       FROM ad_spend a

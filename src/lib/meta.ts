@@ -162,23 +162,18 @@ export async function syncMetaAds(dateStart: string, dateEnd: string): Promise<M
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
-  // Fallback for CSV imports (no meta_ad_id)
-  const upsertByName = db.prepare(`
+  // Fallback for CSV imports (no meta_ad_id) - check then update/insert
+  const findByName = db.prepare('SELECT id FROM ad_spend WHERE date = ? AND ad_name = ? LIMIT 1');
+  const updateByName = db.prepare(`
+    UPDATE ad_spend SET
+      spend = ?, results = ?, reach = ?, frequency = ?,
+      impressions = ?, cpm = ?, link_clicks = ?, ctr = ?,
+      ad_delivery = ?, cost_per_result = ?, campaign_type = ?, batch = ?
+    WHERE date = ? AND ad_name = ? AND meta_ad_id IS NULL
+  `);
+  const insertByName = db.prepare(`
     INSERT INTO ad_spend (date, client_id, ad_name, spend, results, reach, frequency, impressions, cpm, link_clicks, ctr, ad_delivery, attribution_setting, cost_per_result, campaign_type, batch)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(date, ad_name) DO UPDATE SET
-      spend = excluded.spend,
-      results = excluded.results,
-      reach = excluded.reach,
-      frequency = excluded.frequency,
-      impressions = excluded.impressions,
-      cpm = excluded.cpm,
-      link_clicks = excluded.link_clicks,
-      ctr = excluded.ctr,
-      ad_delivery = excluded.ad_delivery,
-      cost_per_result = excluded.cost_per_result,
-      campaign_type = excluded.campaign_type,
-      batch = excluded.batch
   `);
 
   let adsProcessed = 0;
@@ -225,21 +220,30 @@ export async function syncMetaAds(dateStart: string, dateEnd: string): Promise<M
               delivery.toLowerCase(), '7-day click', costPerResult, campaignType, batch
             );
           } catch {
-            // If ad_name conflict (old CSV data), update it and add meta_ad_id
-            upsertByName.run(
-              date, client.id, adName,
+            // If insert fails (shouldn't happen after migration), update by name and set meta_ad_id
+            updateByName.run(
               spend, purchases, reach, frequency, impressions, cpm, linkClicks, ctr,
-              delivery.toLowerCase(), '7-day click', costPerResult, campaignType, batch
+              delivery.toLowerCase(), costPerResult, campaignType, batch,
+              date, adName
             );
-            db.prepare('UPDATE ad_spend SET meta_ad_id = ? WHERE date = ? AND ad_name = ?').run(metaAdId, date, adName);
+            db.prepare('UPDATE ad_spend SET meta_ad_id = ? WHERE date = ? AND ad_name = ? AND meta_ad_id IS NULL').run(metaAdId, date, adName);
           }
         }
       } else {
-        upsertByName.run(
-          date, client.id, adName,
-          spend, purchases, reach, frequency, impressions, cpm, linkClicks, ctr,
-          delivery.toLowerCase(), '7-day click', costPerResult, campaignType, batch
-        );
+        const existingByName = findByName.get(date, adName) as { id: number } | undefined;
+        if (existingByName) {
+          updateByName.run(
+            spend, purchases, reach, frequency, impressions, cpm, linkClicks, ctr,
+            delivery.toLowerCase(), costPerResult, campaignType, batch,
+            date, adName
+          );
+        } else {
+          insertByName.run(
+            date, client.id, adName,
+            spend, purchases, reach, frequency, impressions, cpm, linkClicks, ctr,
+            delivery.toLowerCase(), '7-day click', costPerResult, campaignType, batch
+          );
+        }
       }
       adsProcessed++;
     }

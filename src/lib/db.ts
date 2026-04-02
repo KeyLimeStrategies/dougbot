@@ -123,19 +123,53 @@ function initializeSchema(db: Database.Database) {
     // Column already exists
   }
 
-  // Add meta_ad_id to ad_spend for proper dedup across campaigns
+  // Migration: add meta_ad_id and remove the overly strict UNIQUE(date, ad_name) constraint
+  // SQLite can't ALTER constraints, so we recreate the table if it still has the old constraint
   try {
     db.exec(`ALTER TABLE ad_spend ADD COLUMN meta_ad_id TEXT`);
   } catch {
     // Column already exists
   }
 
-  // Index for fast lookups by (date, meta_ad_id)
-  try {
-    db.exec(`CREATE INDEX IF NOT EXISTS idx_ad_spend_date_meta_id ON ad_spend(date, meta_ad_id)`);
-  } catch {
-    // Index already exists
+  // Check if the old UNIQUE(date, ad_name) constraint exists by checking index names
+  const hasOldConstraint = (db.prepare(
+    "SELECT COUNT(*) as cnt FROM sqlite_master WHERE type='index' AND tbl_name='ad_spend' AND sql LIKE '%UNIQUE%ad_name%'"
+  ).get() as { cnt: number })?.cnt > 0 ||
+  // Also check via pragma for auto-created unique index from CREATE TABLE
+  (db.prepare("SELECT COUNT(*) as cnt FROM pragma_index_list('ad_spend') WHERE origin = 'u'").get() as { cnt: number })?.cnt > 0;
+
+  if (hasOldConstraint) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS ad_spend_v2 (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        date TEXT NOT NULL,
+        client_id INTEGER NOT NULL,
+        ad_name TEXT NOT NULL,
+        meta_ad_id TEXT,
+        spend REAL NOT NULL DEFAULT 0,
+        results INTEGER NOT NULL DEFAULT 0,
+        reach INTEGER NOT NULL DEFAULT 0,
+        frequency REAL NOT NULL DEFAULT 0,
+        impressions INTEGER NOT NULL DEFAULT 0,
+        cpm REAL NOT NULL DEFAULT 0,
+        link_clicks INTEGER NOT NULL DEFAULT 0,
+        ctr REAL NOT NULL DEFAULT 0,
+        ad_delivery TEXT,
+        attribution_setting TEXT,
+        cost_per_result REAL,
+        campaign_type TEXT,
+        batch TEXT,
+        FOREIGN KEY (client_id) REFERENCES clients(id)
+      );
+      INSERT INTO ad_spend_v2 SELECT id, date, client_id, ad_name, meta_ad_id, spend, results, reach, frequency, impressions, cpm, link_clicks, ctr, ad_delivery, attribution_setting, cost_per_result, campaign_type, batch FROM ad_spend;
+      DROP TABLE ad_spend;
+      ALTER TABLE ad_spend_v2 RENAME TO ad_spend;
+    `);
   }
+
+  // Indexes for fast lookups (no unique constraint - dedup handled in application)
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_ad_spend_date_meta_id ON ad_spend(date, meta_ad_id)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_ad_spend_date_ad_name ON ad_spend(date, ad_name)`);
 
   // Add is_ad_client column (1 = runs ads, 0 = non-ad client like text/email only)
   try {
