@@ -265,6 +265,17 @@ export function parseActBlueCsv(csvText: string, filename: string, knownShortCod
 
   let rowsProcessed = 0;
 
+  // Log column headers for debugging
+  const firstRow = (parsed.data as Record<string, string>[])[0];
+  if (firstRow) {
+    const cols = Object.keys(firstRow);
+    console.log(`[ActBlue CSV] Columns (${cols.length}): ${cols.join(', ')}`);
+    const hasLineitem = cols.some(c => c.toLowerCase().includes('lineitem'));
+    const hasReceipt = cols.some(c => c.toLowerCase().includes('receipt'));
+    const hasRecurrence = cols.some(c => c.toLowerCase().includes('recurrence'));
+    console.log(`[ActBlue CSV] Has Lineitem ID: ${hasLineitem}, Has Receipt ID: ${hasReceipt}, Has Recurrence: ${hasRecurrence}`);
+  }
+
   const insertMany = db.transaction(() => {
     for (const row of parsed.data as Record<string, string>[]) {
       const amount = parseFloat(row['Amount'] || row['amount'] || '0');
