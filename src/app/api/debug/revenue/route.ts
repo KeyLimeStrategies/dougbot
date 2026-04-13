@@ -32,7 +32,7 @@ export async function GET(request: NextRequest) {
     recurring_amount: rows.filter(r => r.recurrence_number > 1).reduce((s, r) => s + r.amount, 0),
     first_time_count: rows.filter(r => r.recurrence_number === 1).length,
     first_time_amount: rows.filter(r => r.recurrence_number === 1).reduce((s, r) => s + r.amount, 0),
-    fbig_rows: fbigRows.map(r => ({ amount: r.amount, page: r.fundraising_page, refcode: r.refcode, donor: r.donor_name, recurrence: r.recurrence_number })),
-    non_fbig_rows: nonFbigRows.map(r => ({ amount: r.amount, page: r.fundraising_page, refcode: r.refcode, donor: r.donor_name, recurrence: r.recurrence_number })),
+    fbig_rows: fbigRows.map(r => ({ amount: r.amount, page: r.fundraising_page, refcode: r.refcode, donor: r.donor_name, recurrence: r.recurrence_number, receipt_id: r.receipt_id })),
+    non_fbig_rows: nonFbigRows.slice(0, 5).map(r => ({ amount: r.amount, page: r.fundraising_page, refcode: r.refcode, donor: r.donor_name, recurrence: r.recurrence_number, receipt_id: r.receipt_id })),
   });
 }
