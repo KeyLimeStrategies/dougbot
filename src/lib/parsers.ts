@@ -363,6 +363,47 @@ export function parseActBlueCsv(csvText: string, filename: string, knownShortCod
     console.log(`[ActBlue CSV] Flagged ${refundedCount} refunded rows in ${filename}`);
   }
 
+  // Post-import: for every refunded row, find and flag the matching ORIGINAL
+  // positive row (same client/amount/donor/refcode within 30 days) as refunded.
+  // Handles ActBlue's pattern of emitting a separate refund row without updating
+  // the original charge. Matches one-for-one by id so duplicate donations aren't
+  // all flagged when only one was refunded.
+  const findOriginal = db.prepare(`
+    SELECT id FROM revenue
+    WHERE refunded = 0
+      AND client_id = ?
+      AND amount = ?
+      AND donor_name = ?
+      AND refcode = ?
+      AND date <= ?
+      AND date >= date(?, '-30 days')
+    ORDER BY date DESC
+    LIMIT 1
+  `);
+  const flagById = db.prepare('UPDATE revenue SET refunded = 1 WHERE id = ?');
+  let matchedOriginals = 0;
+
+  const matchRefunds = db.transaction(() => {
+    const refundedRows = db.prepare(`
+      SELECT id, client_id, refcode, donor_name, amount, date
+      FROM revenue WHERE refunded = 1
+    `).all() as { id: number; client_id: number; refcode: string; donor_name: string; amount: number; date: string }[];
+
+    for (const r of refundedRows) {
+      // Skip matching to itself (the refund row is already flagged)
+      const original = findOriginal.get(r.client_id, r.amount, r.donor_name, r.refcode, r.date, r.date) as { id: number } | undefined;
+      if (original && original.id !== r.id) {
+        flagById.run(original.id);
+        matchedOriginals++;
+      }
+    }
+  });
+  matchRefunds();
+
+  if (matchedOriginals > 0) {
+    console.log(`[ActBlue CSV] Matched and flagged ${matchedOriginals} original donations as refunded`);
+  }
+
   db.prepare('INSERT INTO uploads (filename, upload_type, rows_processed) VALUES (?, ?, ?)').run(
     filename, 'actblue', rowsProcessed
   );
