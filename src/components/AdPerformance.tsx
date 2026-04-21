@@ -328,7 +328,7 @@ function CampaignCard({
 
 function AdChart({ adName }: { adName: string }) {
   const [data, setData] = useState<{ date: string; spend: number; revenue: number; roi: number; results: number }[]>([]);
-  const [video, setVideo] = useState<{ has_data: boolean; hook_rate: number; retention_rate: number; impressions: number; views_3s: number; thruplays: number } | null>(null);
+  const [video, setVideo] = useState<{ has_data: boolean; hook_rate: number; retention_rate: number; impressions: number; hook_views: number; completions: number } | null>(null);
   const [days, setDays] = useState(14);
   const [loading, setLoading] = useState(true);
 
@@ -359,12 +359,12 @@ function AdChart({ adName }: { adName: string }) {
         {video?.has_data && (
           <div className="ml-auto flex items-center gap-3 text-[10px]">
             <span className="text-gray-500 uppercase">Video ({days}d):</span>
-            <span className="text-gray-400" title="3-sec plays / impressions. Higher = more people stopped scrolling.">
+            <span className="text-gray-400" title="2-sec continuous views / impressions. Higher = more people stopped scrolling.">
               Hook Rate: <span className={`font-mono font-semibold ${video.hook_rate >= 0.25 ? 'text-green-400' : video.hook_rate >= 0.15 ? 'text-yellow-400' : 'text-red-400'}`}>
                 {(video.hook_rate * 100).toFixed(1)}%
               </span>
             </span>
-            <span className="text-gray-400" title="Thruplays / 3-sec plays. Higher = more viewers finished the ad.">
+            <span className="text-gray-400" title="100% completions / 2-sec views. Higher = more engaged viewers finished the ad.">
               Retention: <span className={`font-mono font-semibold ${video.retention_rate >= 0.15 ? 'text-green-400' : video.retention_rate >= 0.08 ? 'text-yellow-400' : 'text-red-400'}`}>
                 {(video.retention_rate * 100).toFixed(1)}%
               </span>

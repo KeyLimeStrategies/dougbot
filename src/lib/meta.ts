@@ -29,7 +29,9 @@ interface MetaAdInsight {
   adset_name?: string;
   spend: string;
   actions?: { action_type: string; value: string }[];
-  video_thruplay_watched_actions?: { action_type: string; value: string }[];
+  video_continuous_2_sec_watched_actions?: { action_type: string; value: string }[];
+  video_p100_watched_actions?: { action_type: string; value: string }[];
+  video_play_actions?: { action_type: string; value: string }[];
   reach: string;
   frequency: string;
   impressions: string;
@@ -40,33 +42,54 @@ interface MetaAdInsight {
   date_stop: string;
 }
 
-// Fetch all ad-level insights for a date range with daily breakdown
+// Base fields always requested (core metrics required for the dashboard)
+const CORE_INSIGHT_FIELDS = 'ad_name,ad_id,campaign_name,adset_name,spend,actions,reach,frequency,impressions,cpm,inline_link_clicks,ctr';
+// Video-only fields (optional; if Meta deprecates any of these, the sync falls back to core-only)
+const VIDEO_INSIGHT_FIELDS = 'video_continuous_2_sec_watched_actions,video_p100_watched_actions,video_play_actions';
+
+// Fetch all ad-level insights for a date range with daily breakdown.
+// If Meta rejects any video field (invalid/deprecated), automatically retry
+// with core fields only so the sync never fails due to video-metric issues.
 async function fetchAdInsights(
   config: MetaConfig,
   dateStart: string,
   dateEnd: string
 ): Promise<MetaAdInsight[]> {
-  const allAds: MetaAdInsight[] = [];
-  const fields = 'ad_name,ad_id,campaign_name,adset_name,spend,actions,video_thruplay_watched_actions,reach,frequency,impressions,cpm,inline_link_clicks,ctr';
   const timeRange = JSON.stringify({ since: dateStart, until: dateEnd });
 
-  let url = `${GRAPH_API_BASE}/${config.adAccountId}/insights?level=ad&fields=${fields}&time_range=${encodeURIComponent(timeRange)}&time_increment=1&limit=500&access_token=${config.accessToken}`;
+  async function fetchWithFields(fieldList: string): Promise<MetaAdInsight[]> {
+    const allAds: MetaAdInsight[] = [];
+    let url = `${GRAPH_API_BASE}/${config.adAccountId}/insights?level=ad&fields=${fieldList}&time_range=${encodeURIComponent(timeRange)}&time_increment=1&limit=500&access_token=${config.accessToken}`;
 
-  while (url) {
-    const res = await fetch(url);
+    while (url) {
+      const res = await fetch(url);
 
-    if (!res.ok) {
-      const errorText = await res.text();
-      throw new Error(`Meta API error (${res.status}): ${errorText}`);
+      if (!res.ok) {
+        const errorText = await res.text();
+        throw new Error(`Meta API error (${res.status}): ${errorText}`);
+      }
+
+      const data = await res.json();
+      allAds.push(...data.data);
+
+      url = data.paging?.next || '';
     }
 
-    const data = await res.json();
-    allAds.push(...data.data);
-
-    url = data.paging?.next || '';
+    return allAds;
   }
 
-  return allAds;
+  const fullFields = `${CORE_INSIGHT_FIELDS},${VIDEO_INSIGHT_FIELDS}`;
+  try {
+    return await fetchWithFields(fullFields);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    // If Meta rejects a field (code 100), fall back to core fields only
+    if (msg.includes('is not valid for fields param') || msg.includes('(#100)')) {
+      console.error(`[Meta sync] Video fields rejected by API, falling back to core fields only. Error: ${msg}`);
+      return await fetchWithFields(CORE_INSIGHT_FIELDS);
+    }
+    throw err;
+  }
 }
 
 // Extract purchase count from actions array
@@ -76,19 +99,10 @@ function getPurchases(actions?: { action_type: string; value: string }[]): numbe
   return purchase ? parseInt(purchase.value, 10) : 0;
 }
 
-// Sum all values from a Meta action-style field (e.g. video_thruplay_watched_actions)
+// Sum all values from a Meta action-style field
 function sumActionValues(actions?: { action_type: string; value: string }[]): number {
   if (!actions || actions.length === 0) return 0;
   return actions.reduce((sum, a) => sum + (parseInt(a.value, 10) || 0), 0);
-}
-
-// Extract 3-second video plays from the generic actions array.
-// Meta deprecated the top-level video_3_sec_watched_actions field; the
-// count now lives in actions[] as action_type 'video_view'.
-function get3SecViews(actions?: { action_type: string; value: string }[]): number {
-  if (!actions) return 0;
-  const v = actions.find(a => a.action_type === 'video_view');
-  return v ? (parseInt(v.value, 10) || 0) : 0;
 }
 
 export interface MetaSyncResult {
@@ -219,8 +233,11 @@ export async function syncMetaAds(dateStart: string, dateEnd: string): Promise<M
       const linkClicks = parseInt(ad.inline_link_clicks || '0', 10);
       const ctr = parseFloat(ad.ctr || '0');
       const costPerResult = purchases > 0 ? spend / purchases : 0;
-      const video3sViews = get3SecViews(ad.actions);
-      const videoThruplays = sumActionValues(ad.video_thruplay_watched_actions);
+      // Hook Rate numerator: 2-second continuous views (Meta's current "stopped scrolling" standard)
+      // Retention numerator: 100% video completions
+      // Stored in video_3s_views / video_thruplays columns (names kept to avoid schema churn)
+      const videoHookViews = sumActionValues(ad.video_continuous_2_sec_watched_actions);
+      const videoCompletions = sumActionValues(ad.video_p100_watched_actions);
 
       const date = ad.date_start;
       const metaAdId = ad.ad_id || null;
@@ -286,9 +303,9 @@ export async function syncMetaAds(dateStart: string, dateEnd: string): Promise<M
 
       // Apply video metrics (stored separately from main upsert to keep statements manageable)
       if (metaAdId) {
-        updateVideoMetricsByMetaId.run(video3sViews, videoThruplays, date, metaAdId);
+        updateVideoMetricsByMetaId.run(videoHookViews, videoCompletions, date, metaAdId);
       } else {
-        updateVideoMetricsByName.run(video3sViews, videoThruplays, date, adName);
+        updateVideoMetricsByName.run(videoHookViews, videoCompletions, date, adName);
       }
 
       adsProcessed++;

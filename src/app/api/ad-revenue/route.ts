@@ -23,16 +23,18 @@ export async function GET(request: NextRequest) {
     ORDER BY date ASC
   `).all(adName, cutoffStr) as { date: string; spend: number; results: number; frequency: number; impressions: number; video_3s_views: number; video_thruplays: number }[];
 
-  // Aggregate hook rate + retention rate over the window
-  let totalImpressions = 0, total3s = 0, totalThru = 0;
+  // Aggregate hook rate + retention rate over the window.
+  // video_3s_views column now holds 2-sec continuous views (Meta's current hook standard).
+  // video_thruplays column now holds 100% completions (p100 watched).
+  let totalImpressions = 0, totalHookViews = 0, totalCompletions = 0;
   for (const d of spendData) {
     totalImpressions += d.impressions || 0;
-    total3s += d.video_3s_views || 0;
-    totalThru += d.video_thruplays || 0;
+    totalHookViews += d.video_3s_views || 0;
+    totalCompletions += d.video_thruplays || 0;
   }
-  const hookRate = totalImpressions > 0 ? total3s / totalImpressions : 0;
-  const retentionRate = total3s > 0 ? totalThru / total3s : 0;
-  const hasVideoData = total3s > 0;
+  const hookRate = totalImpressions > 0 ? totalHookViews / totalImpressions : 0;
+  const retentionRate = totalHookViews > 0 ? totalCompletions / totalHookViews : 0;
+  const hasVideoData = totalHookViews > 0;
 
   // Daily revenue for this ad (by refcode matching)
   const revenueData = db.prepare(`
@@ -77,8 +79,8 @@ export async function GET(request: NextRequest) {
       hook_rate: hookRate,
       retention_rate: retentionRate,
       impressions: totalImpressions,
-      views_3s: total3s,
-      thruplays: totalThru,
+      hook_views: totalHookViews,
+      completions: totalCompletions,
     },
   });
 }
