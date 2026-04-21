@@ -413,6 +413,130 @@ export function parseActBlueCsv(csvText: string, filename: string, knownShortCod
   return { rowsProcessed, errors };
 }
 
+// Parse the refunded_contributions CSV and flag matching existing DB rows as refunded.
+// ActBlue's refunded_contributions CSV returns contributions that were refunded in
+// the date range. We use the rows to find and mark the matching originals in our DB.
+// Matching criteria (ordered, most specific first):
+//   1. Same client, same amount, same donor_name, same refcode, within 60 days
+//   2. Same client, same amount, same donor_name, within 60 days (drop refcode if not in refund CSV)
+// If no match found, we still insert a standalone refunded row for audit/accounting.
+export function parseActBlueRefundsCsv(csvText: string, filename: string, knownShortCode?: string): { rowsProcessed: number; rowsFlagged: number; rowsInserted: number; errors: string[] } {
+  const db = getDb();
+  const errors: string[] = [];
+
+  // Empty or whitespace-only CSV (e.g. no refunds in range) is a no-op
+  if (!csvText || !csvText.trim()) {
+    return { rowsProcessed: 0, rowsFlagged: 0, rowsInserted: 0, errors: [] };
+  }
+
+  const parsed = Papa.parse(csvText, { header: true, skipEmptyLines: true, dynamicTyping: false });
+  if (parsed.errors.length > 0) {
+    errors.push(...parsed.errors.map(e => `Row ${e.row}: ${e.message}`));
+  }
+
+  const rows = parsed.data as Record<string, string>[];
+  if (rows.length === 0) {
+    return { rowsProcessed: 0, rowsFlagged: 0, rowsInserted: 0, errors };
+  }
+
+  // Log columns once for visibility
+  const firstRow = rows[0];
+  if (firstRow) {
+    console.log(`[ActBlue refunded_contributions CSV] Columns (${Object.keys(firstRow).length}): ${Object.keys(firstRow).join(', ')}`);
+  }
+
+  // Match strategies (most specific → least)
+  const findWithRefcode = db.prepare(`
+    SELECT id FROM revenue
+    WHERE refunded = 0
+      AND client_id = ?
+      AND ABS(amount - ?) < 0.01
+      AND donor_name = ?
+      AND refcode = ?
+      AND date >= date(?, '-60 days')
+      AND date <= ?
+    ORDER BY date DESC LIMIT 1
+  `);
+  const findWithoutRefcode = db.prepare(`
+    SELECT id FROM revenue
+    WHERE refunded = 0
+      AND client_id = ?
+      AND ABS(amount - ?) < 0.01
+      AND donor_name = ?
+      AND date >= date(?, '-60 days')
+      AND date <= ?
+    ORDER BY date DESC LIMIT 1
+  `);
+  const flagById = db.prepare('UPDATE revenue SET refunded = 1 WHERE id = ?');
+  const insertRefundRow = db.prepare(`
+    INSERT INTO revenue (date, client_id, refcode, amount, donor_name, member_code, fundraising_page, recurrence_number, refunded)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
+  `);
+
+  let rowsProcessed = 0;
+  let rowsFlagged = 0;
+  let rowsInserted = 0;
+
+  const apply = db.transaction(() => {
+    for (const row of rows) {
+      const amount = Math.abs(parseFloat(row['Amount'] || row['amount'] || '0'));
+      const dateStr = row['Date'] || row['date'] || row['Payment Date'] || row['Refund Date'] || row['Refunded At'] || '';
+      const refcode = row['Refcode'] || row['refcode'] || row['Reference Code'] || '';
+      const recipient = row['Recipient'] || row['recipient'] || '';
+      const donorName = `${row['First Name'] || row['Donor First Name'] || ''} ${row['Last Name'] || row['Donor Last Name'] || ''}`.trim();
+      const fundraisingPage = row['Fundraising Page'] || '';
+      const recurrenceNumber = parseInt(row['Recurrence Number'] || '1', 10) || 1;
+
+      if (!dateStr || amount === 0) continue;
+      const date = normalizeDate(dateStr.split(' ')[0]);
+
+      // Resolve client (same logic as paid parser)
+      let clientId: number | null = null;
+      if (knownShortCode) {
+        const c = db.prepare('SELECT id FROM clients WHERE short_code = ?').get(knownShortCode) as { id: number } | undefined;
+        if (c) clientId = c.id;
+      }
+      if (!clientId && refcode) {
+        const c = getClientByAdName(refcode);
+        if (c) clientId = c.id;
+      }
+      if (!clientId && recipient) {
+        const c = db.prepare("SELECT id FROM clients WHERE entity_name LIKE ? OR name LIKE ?")
+          .get(`%${recipient}%`, `%${recipient}%`) as { id: number } | undefined;
+        if (c) clientId = c.id;
+      }
+      if (!clientId) continue;
+
+      // Try most-specific match first
+      let match = findWithRefcode.get(clientId, amount, donorName, refcode, date, date) as { id: number } | undefined;
+      if (!match) {
+        match = findWithoutRefcode.get(clientId, amount, donorName, date, date) as { id: number } | undefined;
+      }
+
+      if (match) {
+        flagById.run(match.id);
+        rowsFlagged++;
+      } else {
+        // No match in DB — insert as standalone refunded row so we have a record
+        insertRefundRow.run(date, clientId, refcode, amount, donorName, recipient, fundraisingPage, recurrenceNumber);
+        rowsInserted++;
+      }
+      rowsProcessed++;
+    }
+  });
+  apply();
+
+  console.log(`[ActBlue refunded_contributions] ${filename}: ${rowsProcessed} refund rows -> ${rowsFlagged} flagged existing, ${rowsInserted} inserted as standalone`);
+
+  db.prepare('INSERT INTO uploads (filename, upload_type, rows_processed) VALUES (?, ?, ?)').run(
+    filename, 'actblue_refunds', rowsProcessed
+  );
+
+  recalculateSummaries();
+
+  return { rowsProcessed, rowsFlagged, rowsInserted, errors };
+}
+
 function normalizeDate(dateStr: string): string {
   // Handle various date formats and normalize to YYYY-MM-DD
   if (!dateStr) return '';

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { syncAllActBlue, getActBlueCredentials, syncActBlueForCandidate, SyncResult } from '@/lib/actblue';
-import { parseActBlueCsv } from '@/lib/parsers';
+import { parseActBlueCsv, parseActBlueRefundsCsv } from '@/lib/parsers';
 
 export async function POST(request: NextRequest) {
   try {
@@ -32,13 +32,21 @@ export async function POST(request: NextRequest) {
       }
 
       try {
-        const { csvText, shortCode } = await syncActBlueForCandidate(creds, date_start, actblue_date_end);
+        const { csvText, refundedCsvText, shortCode } = await syncActBlueForCandidate(creds, date_start, actblue_date_end);
         const parsed = parseActBlueCsv(csvText, `actblue_${shortCode}_${date_start}_${date_end}.csv`, shortCode);
+        // Apply refunds (flags existing rows as refunded; inserts standalone if no match)
+        const refundResult = parseActBlueRefundsCsv(
+          refundedCsvText,
+          `actblue_refunds_${shortCode}_${date_start}_${date_end}.csv`,
+          shortCode,
+        );
         results.push({
           shortCode,
           success: true,
           rowsProcessed: parsed.rowsProcessed,
-        });
+          refundsFlagged: refundResult.rowsFlagged,
+          refundsInserted: refundResult.rowsInserted,
+        } as SyncResult & { refundsFlagged: number; refundsInserted: number });
       } catch (err) {
         results.push({
           shortCode: short_code,
@@ -50,15 +58,22 @@ export async function POST(request: NextRequest) {
       // Sync all configured candidates
       const { csvTexts, errors } = await syncAllActBlue(date_start, actblue_date_end);
 
-      // Parse and store each CSV
-      for (const { csvText, shortCode } of csvTexts) {
+      // Parse and store each CSV (paid + refunds)
+      for (const { csvText, refundedCsvText, shortCode } of csvTexts) {
         try {
           const parsed = parseActBlueCsv(csvText, `actblue_${shortCode}_${date_start}_${date_end}.csv`, shortCode);
+          const refundResult = parseActBlueRefundsCsv(
+            refundedCsvText,
+            `actblue_refunds_${shortCode}_${date_start}_${date_end}.csv`,
+            shortCode,
+          );
           results.push({
             shortCode,
             success: true,
             rowsProcessed: parsed.rowsProcessed,
-          });
+            refundsFlagged: refundResult.rowsFlagged,
+            refundsInserted: refundResult.rowsInserted,
+          } as SyncResult & { refundsFlagged: number; refundsInserted: number });
         } catch (err) {
           results.push({
             shortCode,

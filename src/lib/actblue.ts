@@ -192,23 +192,42 @@ export interface SyncResult {
   error?: string;
 }
 
-// Sync a single candidate's ActBlue data for a date range
+// Sync a single candidate's ActBlue data for a date range.
+// Returns both the paid (non-refunded) CSV and the refunded CSV so callers
+// can apply refund flags to existing DB rows.
+// ActBlue splits contributions across three csv_types: paid_contributions
+// contains only NON-refunded; refunded_contributions contains only refunded.
+// A contribution that gets refunded disappears from paid_contributions and
+// appears in refunded_contributions, so we must sync both to stay accurate.
 export async function syncActBlueForCandidate(
   creds: ActBlueCredentials,
   dateStart: string,
   dateEnd: string
-): Promise<{ csvText: string; shortCode: string }> {
-  const csvId = await requestCsv(creds, 'paid_contributions', dateStart, dateEnd);
-  const downloadUrl = await pollForDownload(creds, csvId);
-  const csvText = await downloadCsv(downloadUrl);
-  return { csvText, shortCode: creds.shortCode };
+): Promise<{ csvText: string; refundedCsvText: string; shortCode: string }> {
+  // Paid (required) - fail the whole candidate if this fails
+  const paidId = await requestCsv(creds, 'paid_contributions', dateStart, dateEnd);
+  const paidUrl = await pollForDownload(creds, paidId);
+  const csvText = await downloadCsv(paidUrl);
+
+  // Refunded (best-effort) - if this fails, log and continue with empty string
+  // so a transient failure here doesn't block the main sync
+  let refundedCsvText = '';
+  try {
+    const refundedId = await requestCsv(creds, 'refunded_contributions', dateStart, dateEnd);
+    const refundedUrl = await pollForDownload(creds, refundedId);
+    refundedCsvText = await downloadCsv(refundedUrl);
+  } catch (err) {
+    console.error(`[ActBlue] refunded_contributions sync failed for ${creds.shortCode}:`, err instanceof Error ? err.message : err);
+  }
+
+  return { csvText, refundedCsvText, shortCode: creds.shortCode };
 }
 
 // Sync all configured candidates
 export async function syncAllActBlue(
   dateStart: string,
   dateEnd: string
-): Promise<{ csvTexts: { csvText: string; shortCode: string }[]; errors: SyncResult[] }> {
+): Promise<{ csvTexts: { csvText: string; refundedCsvText: string; shortCode: string }[]; errors: SyncResult[] }> {
   const creds = getActBlueCredentials();
 
   if (creds.length === 0) {
@@ -219,7 +238,7 @@ export async function syncAllActBlue(
     creds.map(c => syncActBlueForCandidate(c, dateStart, dateEnd))
   );
 
-  const csvTexts: { csvText: string; shortCode: string }[] = [];
+  const csvTexts: { csvText: string; refundedCsvText: string; shortCode: string }[] = [];
   const errors: SyncResult[] = [];
 
   results.forEach((result, i) => {
