@@ -44,7 +44,7 @@ export async function POST() {
     const revenueData = db.prepare(`
       SELECT date, client_id, SUM(amount) as total_revenue
       FROM revenue
-      WHERE fundraising_page LIKE '%fbig%'
+      WHERE fundraising_page LIKE '%fbig%' AND refunded = 0
       GROUP BY date, client_id
     `).all() as { date: string; client_id: number; total_revenue: number }[];
 

@@ -58,7 +58,7 @@ export async function GET(request: NextRequest) {
         COUNT(DISTINCT r.date) as days_active
       FROM revenue r
       JOIN clients c ON c.id = r.client_id
-      WHERE c.active = 1 ${dateFilter} ${clientFilter}
+      WHERE c.active = 1 AND r.refunded = 0 ${dateFilter} ${clientFilter}
       GROUP BY r.fundraising_page, c.short_code
       ORDER BY total_amount DESC
     `).all(...params) as {
@@ -82,7 +82,7 @@ export async function GET(request: NextRequest) {
         SUM(r.amount) as total_amount
       FROM revenue r
       JOIN clients c ON c.id = r.client_id
-      WHERE c.active = 1 ${dateFilter} ${clientFilter}
+      WHERE c.active = 1 AND r.refunded = 0 ${dateFilter} ${clientFilter}
       GROUP BY r.fundraising_page, c.short_code, r.date
       ORDER BY r.date DESC
     `).all(...params) as {

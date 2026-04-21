@@ -29,6 +29,8 @@ interface MetaAdInsight {
   adset_name?: string;
   spend: string;
   actions?: { action_type: string; value: string }[];
+  video_3_sec_watched_actions?: { action_type: string; value: string }[];
+  video_thruplay_watched_actions?: { action_type: string; value: string }[];
   reach: string;
   frequency: string;
   impressions: string;
@@ -46,7 +48,7 @@ async function fetchAdInsights(
   dateEnd: string
 ): Promise<MetaAdInsight[]> {
   const allAds: MetaAdInsight[] = [];
-  const fields = 'ad_name,ad_id,campaign_name,adset_name,spend,actions,reach,frequency,impressions,cpm,inline_link_clicks,ctr';
+  const fields = 'ad_name,ad_id,campaign_name,adset_name,spend,actions,video_3_sec_watched_actions,video_thruplay_watched_actions,reach,frequency,impressions,cpm,inline_link_clicks,ctr';
   const timeRange = JSON.stringify({ since: dateStart, until: dateEnd });
 
   let url = `${GRAPH_API_BASE}/${config.adAccountId}/insights?level=ad&fields=${fields}&time_range=${encodeURIComponent(timeRange)}&time_increment=1&limit=500&access_token=${config.accessToken}`;
@@ -73,6 +75,12 @@ function getPurchases(actions?: { action_type: string; value: string }[]): numbe
   if (!actions) return 0;
   const purchase = actions.find(a => a.action_type === 'offsite_conversion.fb_pixel_purchase');
   return purchase ? parseInt(purchase.value, 10) : 0;
+}
+
+// Sum all values from a Meta action-style field (e.g. video_3_sec_watched_actions)
+function sumActionValues(actions?: { action_type: string; value: string }[]): number {
+  if (!actions || actions.length === 0) return 0;
+  return actions.reduce((sum, a) => sum + (parseInt(a.value, 10) || 0), 0);
 }
 
 export interface MetaSyncResult {
@@ -162,6 +170,14 @@ export async function syncMetaAds(dateStart: string, dateEnd: string): Promise<M
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
+  // Video engagement metrics update (applied after row exists)
+  const updateVideoMetricsByMetaId = db.prepare(
+    'UPDATE ad_spend SET video_3s_views = ?, video_thruplays = ? WHERE date = ? AND meta_ad_id = ?'
+  );
+  const updateVideoMetricsByName = db.prepare(
+    'UPDATE ad_spend SET video_3s_views = ?, video_thruplays = ? WHERE date = ? AND ad_name = ? AND meta_ad_id IS NULL'
+  );
+
   // Fallback for CSV imports (no meta_ad_id) - check then update/insert
   const findByName = db.prepare('SELECT id FROM ad_spend WHERE date = ? AND ad_name = ? LIMIT 1');
   const updateByName = db.prepare(`
@@ -195,6 +211,8 @@ export async function syncMetaAds(dateStart: string, dateEnd: string): Promise<M
       const linkClicks = parseInt(ad.inline_link_clicks || '0', 10);
       const ctr = parseFloat(ad.ctr || '0');
       const costPerResult = purchases > 0 ? spend / purchases : 0;
+      const video3sViews = sumActionValues(ad.video_3_sec_watched_actions);
+      const videoThruplays = sumActionValues(ad.video_thruplay_watched_actions);
 
       const date = ad.date_start;
       const metaAdId = ad.ad_id || null;
@@ -257,6 +275,14 @@ export async function syncMetaAds(dateStart: string, dateEnd: string): Promise<M
           );
         }
       }
+
+      // Apply video metrics (stored separately from main upsert to keep statements manageable)
+      if (metaAdId) {
+        updateVideoMetricsByMetaId.run(video3sViews, videoThruplays, date, metaAdId);
+      } else {
+        updateVideoMetricsByName.run(video3sViews, videoThruplays, date, adName);
+      }
+
       adsProcessed++;
     }
   });
@@ -350,7 +376,7 @@ function recalculateSummaries() {
   const revenueData = db.prepare(`
     SELECT date, client_id, SUM(amount) as total_revenue
     FROM revenue
-    WHERE fundraising_page LIKE '%fbig%'
+    WHERE fundraising_page LIKE '%fbig%' AND refunded = 0
     GROUP BY date, client_id
   `).all() as { date: string; client_id: number; total_revenue: number }[];
 

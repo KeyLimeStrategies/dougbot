@@ -49,7 +49,7 @@ export async function GET(request: NextRequest) {
         FROM (
           SELECT DISTINCT date, client_id FROM ad_spend
           UNION
-          SELECT DISTINCT date, client_id FROM revenue WHERE fundraising_page LIKE '%fbig%' AND recurrence_number = 1
+          SELECT DISTINCT date, client_id FROM revenue WHERE fundraising_page LIKE '%fbig%' AND recurrence_number = 1 AND refunded = 0
         ) a
         JOIN clients c ON c.id = a.client_id
         LEFT JOIN (
@@ -58,7 +58,7 @@ export async function GET(request: NextRequest) {
         LEFT JOIN (
           SELECT date, client_id, SUM(amount) as total_revenue
           FROM revenue
-          WHERE fundraising_page LIKE '%fbig%' AND recurrence_number = 1
+          WHERE fundraising_page LIKE '%fbig%' AND recurrence_number = 1 AND refunded = 0
           GROUP BY date, client_id
         ) rev ON rev.date = a.date AND rev.client_id = a.client_id
         WHERE c.active = 1 AND c.is_ad_client = 1 ${dateWhere}

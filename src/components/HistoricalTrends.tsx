@@ -1,9 +1,28 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
-import { Plus, X } from 'lucide-react';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceDot } from 'recharts';
+import { Plus, X, AlertTriangle } from 'lucide-react';
 import type { HistoricalPoint } from '@/lib/types';
+
+interface AnomalyContrib {
+  date: string;
+  short_code: string;
+  client_name: string;
+  amount: number;
+  donor_name: string;
+  refcode: string;
+  client_median: number;
+  multiple: number | null;
+}
+
+interface AnomalyAgg {
+  date: string;
+  short_code: string;
+  client_name: string;
+  total: number;
+  count: number;
+}
 
 const COLORS = [
   '#84cc16', '#22d3ee', '#f472b6', '#fb923c', '#a78bfa',
@@ -26,6 +45,10 @@ export default function HistoricalTrends({ refreshKey }: { refreshKey: number })
   const [excludeRecurring, setExcludeRecurring] = useState(false);
   const [changes, setChanges] = useState<CampaignChange[]>([]);
   const [showChanges, setShowChanges] = useState(true);
+  const [anomalies, setAnomalies] = useState<AnomalyContrib[]>([]);
+  const [anomalyAgg, setAnomalyAgg] = useState<AnomalyAgg[]>([]);
+  const [showAnomalies, setShowAnomalies] = useState(true);
+  const [excludeAnomalies, setExcludeAnomalies] = useState(false);
 
   // Log change form
   const [showLogForm, setShowLogForm] = useState(false);
@@ -36,16 +59,27 @@ export default function HistoricalTrends({ refreshKey }: { refreshKey: number })
 
   useEffect(() => {
     const recurParam = excludeRecurring ? '&exclude_recurring=true' : '';
-    fetch(`/api/historical?days=${days}${recurParam}`)
+    const anomParam = excludeAnomalies ? '&exclude_anomalies=true' : '';
+    fetch(`/api/historical?days=${days}${recurParam}${anomParam}`)
       .then(r => r.json())
       .then(d => setData(d.data || []))
       .catch(console.error);
-  }, [days, refreshKey, excludeRecurring]);
+  }, [days, refreshKey, excludeRecurring, excludeAnomalies]);
 
   useEffect(() => {
     fetch(`/api/campaign-changes?days=${days}`)
       .then(r => r.json())
       .then(d => setChanges(d.changes || []))
+      .catch(() => {});
+  }, [days, refreshKey]);
+
+  useEffect(() => {
+    fetch(`/api/anomalies?days=${days}`)
+      .then(r => r.json())
+      .then(d => {
+        setAnomalies(d.anomalies || []);
+        setAnomalyAgg(d.aggregated || []);
+      })
       .catch(() => {});
   }, [days, refreshKey]);
 
@@ -130,6 +164,24 @@ export default function HistoricalTrends({ refreshKey }: { refreshKey: number })
   // Get unique change dates for reference lines
   const changeDates = [...new Set(visibleChanges.map(c => `${parseInt(c.date.split('-')[1])}/${parseInt(c.date.split('-')[2])}`))];
 
+  // Build anomaly markers: map each anomaly to its (dateLabel, y-value) on the chart
+  const visibleAnomalyMarkers = (showAnomalies ? anomalyAgg : [])
+    .filter(a => visibleClients.includes(a.short_code))
+    .map(a => {
+      const dateLabel = `${parseInt(a.date.split('-')[1])}/${parseInt(a.date.split('-')[2])}`;
+      const chartPoint = chartData.find(p => p.fullDate === a.date);
+      const yValue = chartPoint ? (chartPoint as Record<string, unknown>)[a.short_code] as number | undefined : undefined;
+      return {
+        dateLabel,
+        short_code: a.short_code,
+        client_name: a.client_name,
+        total: a.total,
+        count: a.count,
+        yValue,
+      };
+    })
+    .filter(a => a.yValue !== undefined && a.yValue !== null);
+
   const changeTypeLabels: Record<string, string> = {
     budget_change: 'Budget',
     status_change: 'Status',
@@ -191,6 +243,30 @@ export default function HistoricalTrends({ refreshKey }: { refreshKey: number })
           }`}
         >
           {showChanges ? 'Events ON' : 'Events OFF'}
+        </button>
+        <button
+          onClick={() => setShowAnomalies(!showAnomalies)}
+          className={`px-3 py-1 text-xs rounded-full border transition-colors ${
+            showAnomalies
+              ? 'bg-amber-900/30 border-amber-700 text-amber-300'
+              : 'bg-gray-800 border-gray-700 text-gray-400 hover:border-gray-600'
+          }`}
+          title="Show markers for anomalously large single donations that can distort ROAS"
+        >
+          <AlertTriangle size={11} className="inline mr-1" />
+          {showAnomalies ? 'Anomalies ON' : 'Anomalies OFF'}
+        </button>
+        <button
+          onClick={() => setExcludeAnomalies(!excludeAnomalies)}
+          disabled={anomalies.length === 0}
+          className={`px-3 py-1 text-xs rounded-full border transition-colors ${
+            excludeAnomalies
+              ? 'bg-amber-900/50 border-amber-500 text-amber-200'
+              : 'bg-gray-800 border-gray-700 text-gray-400 hover:border-gray-600'
+          } disabled:opacity-40 disabled:cursor-not-allowed`}
+          title="Recompute ROAS with anomalous contributions subtracted"
+        >
+          {excludeAnomalies ? 'Excl. Anomalies' : 'Incl. Anomalies'}
         </button>
         <button
           onClick={() => { setShowLogForm(!showLogForm); if (!logDate) setLogDate(new Date().toISOString().split('T')[0]); }}
@@ -305,6 +381,26 @@ export default function HistoricalTrends({ refreshKey }: { refreshKey: number })
               {changeDates.map((dateLabel, i) => (
                 <ReferenceLine key={`change-${i}`} x={dateLabel} stroke="#a855f7" strokeDasharray="3 3" strokeWidth={1} />
               ))}
+              {/* Anomalous donation markers */}
+              {visibleAnomalyMarkers.map((a, i) => (
+                <ReferenceDot
+                  key={`anom-${i}`}
+                  x={a.dateLabel}
+                  y={a.yValue as number}
+                  r={7}
+                  fill="#f59e0b"
+                  stroke="#fbbf24"
+                  strokeWidth={2}
+                  ifOverflow="extendDomain"
+                  label={{
+                    value: '!',
+                    position: 'center',
+                    fill: '#000',
+                    fontSize: 11,
+                    fontWeight: 'bold',
+                  }}
+                />
+              ))}
               {visibleClients.map((client) => {
                 const i = clients.indexOf(client);
                 return (
@@ -322,6 +418,38 @@ export default function HistoricalTrends({ refreshKey }: { refreshKey: number })
               })}
             </LineChart>
           </ResponsiveContainer>
+        </div>
+      )}
+
+      {/* Anomalous Donations Log */}
+      {showAnomalies && anomalies.filter(a => visibleClients.includes(a.short_code)).length > 0 && (
+        <div className="mt-4 bg-amber-950/20 rounded-lg border border-amber-900/50 p-3">
+          <div className="flex items-center justify-between mb-2">
+            <h4 className="text-xs text-amber-400 uppercase font-medium flex items-center gap-1.5">
+              <AlertTriangle size={12} /> Anomalous Donations
+            </h4>
+            <span className="text-[10px] text-gray-500">
+              Flagged: &gt;=10x client median AND &gt;=$250
+            </span>
+          </div>
+          <div className="space-y-1 max-h-48 overflow-y-auto">
+            {anomalies
+              .filter(a => visibleClients.includes(a.short_code))
+              .map((a, i) => (
+                <div key={i} className="flex items-center gap-2 text-xs">
+                  <span className="text-gray-500 font-mono w-12 shrink-0">{`${parseInt(a.date.split('-')[1])}/${parseInt(a.date.split('-')[2])}`}</span>
+                  <span className="text-amber-300 font-mono font-semibold w-20 shrink-0">${a.amount.toFixed(0)}</span>
+                  <span className="text-gray-300 w-24 shrink-0">{a.client_name}</span>
+                  <span className="text-gray-500 shrink-0">{a.donor_name || 'anon'}</span>
+                  {a.multiple !== null && (
+                    <span className="text-amber-500/70 ml-auto shrink-0">{a.multiple}x median (${a.client_median.toFixed(0)})</span>
+                  )}
+                  {a.refcode && (
+                    <span className="text-gray-600 font-mono text-[10px]">{a.refcode}</span>
+                  )}
+                </div>
+              ))}
+          </div>
         </div>
       )}
 

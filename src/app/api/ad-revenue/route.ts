@@ -17,17 +17,28 @@ export async function GET(request: NextRequest) {
 
   // Daily spend for this ad
   const spendData = db.prepare(`
-    SELECT date, spend, results, frequency
+    SELECT date, spend, results, frequency, impressions, video_3s_views, video_thruplays
     FROM ad_spend
     WHERE ad_name = ? AND date >= ?
     ORDER BY date ASC
-  `).all(adName, cutoffStr) as { date: string; spend: number; results: number; frequency: number }[];
+  `).all(adName, cutoffStr) as { date: string; spend: number; results: number; frequency: number; impressions: number; video_3s_views: number; video_thruplays: number }[];
+
+  // Aggregate hook rate + retention rate over the window
+  let totalImpressions = 0, total3s = 0, totalThru = 0;
+  for (const d of spendData) {
+    totalImpressions += d.impressions || 0;
+    total3s += d.video_3s_views || 0;
+    totalThru += d.video_thruplays || 0;
+  }
+  const hookRate = totalImpressions > 0 ? total3s / totalImpressions : 0;
+  const retentionRate = total3s > 0 ? totalThru / total3s : 0;
+  const hasVideoData = total3s > 0;
 
   // Daily revenue for this ad (by refcode matching)
   const revenueData = db.prepare(`
     SELECT date, SUM(amount) as revenue, COUNT(*) as contributions
     FROM revenue
-    WHERE refcode = ? AND date >= ? AND fundraising_page LIKE '%fbig%'
+    WHERE refcode = ? AND date >= ? AND fundraising_page LIKE '%fbig%' AND refunded = 0
     GROUP BY date
     ORDER BY date ASC
   `).all(adName, cutoffStr) as { date: string; revenue: number; contributions: number }[];
@@ -58,5 +69,16 @@ export async function GET(request: NextRequest) {
     };
   });
 
-  return NextResponse.json({ ad_name: adName, daily });
+  return NextResponse.json({
+    ad_name: adName,
+    daily,
+    video: {
+      has_data: hasVideoData,
+      hook_rate: hookRate,
+      retention_rate: retentionRate,
+      impressions: totalImpressions,
+      views_3s: total3s,
+      thruplays: totalThru,
+    },
+  });
 }

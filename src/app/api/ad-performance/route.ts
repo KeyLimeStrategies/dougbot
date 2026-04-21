@@ -95,7 +95,7 @@ export async function GET(request: NextRequest) {
       FROM revenue r
       JOIN clients c ON c.id = r.client_id
       WHERE r.refcode IS NOT NULL AND r.refcode != '' AND c.active = 1 AND c.is_ad_client = 1
-        AND r.fundraising_page LIKE '%fbig%' ${clientWhere}
+        AND r.fundraising_page LIKE '%fbig%' AND r.refunded = 0 ${clientWhere}
       GROUP BY r.refcode
     `).all(threeDaysAgoET, oneDayAgoET, twoDaysAgoET, oneDayAgoET, ...params) as { refcode: string; total_revenue: number; revenue_72h: number; revenue_24h: number; revenue_prev_24h: number }[];
 

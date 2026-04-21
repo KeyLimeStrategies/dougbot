@@ -248,19 +248,20 @@ export function parseActBlueCsv(csvText: string, filename: string, knownShortCod
   }
 
   const insertRevenue = db.prepare(`
-    INSERT INTO revenue (date, client_id, refcode, amount, donor_name, member_code, receipt_id, fundraising_page, recurrence_number)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO revenue (date, client_id, refcode, amount, donor_name, member_code, receipt_id, fundraising_page, recurrence_number, refunded)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(receipt_id) DO UPDATE SET
       amount = excluded.amount,
       refcode = excluded.refcode,
       fundraising_page = excluded.fundraising_page,
-      recurrence_number = excluded.recurrence_number
+      recurrence_number = excluded.recurrence_number,
+      refunded = excluded.refunded
   `);
 
   // Fallback for rows without receipt_id (manual uploads)
   const insertRevenueNoReceipt = db.prepare(`
-    INSERT INTO revenue (date, client_id, refcode, amount, donor_name, member_code, fundraising_page, recurrence_number)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO revenue (date, client_id, refcode, amount, donor_name, member_code, fundraising_page, recurrence_number, refunded)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   let rowsProcessed = 0;
@@ -273,12 +274,36 @@ export function parseActBlueCsv(csvText: string, filename: string, knownShortCod
     const hasLineitem = cols.some(c => c.toLowerCase().includes('lineitem'));
     const hasReceipt = cols.some(c => c.toLowerCase().includes('receipt'));
     const hasRecurrence = cols.some(c => c.toLowerCase().includes('recurrence'));
-    console.log(`[ActBlue CSV] Has Lineitem ID: ${hasLineitem}, Has Receipt ID: ${hasReceipt}, Has Recurrence: ${hasRecurrence}`);
+    const hasRefund = cols.some(c => c.toLowerCase().includes('refund') || c.toLowerCase() === 'disposition');
+    console.log(`[ActBlue CSV] Has Lineitem ID: ${hasLineitem}, Has Receipt ID: ${hasReceipt}, Has Recurrence: ${hasRecurrence}, Has Refund indicator: ${hasRefund}`);
   }
+
+  // Helper: check if row is a refund across multiple possible column names
+  const isRefundRow = (row: Record<string, string>): boolean => {
+    // Explicit "Refunded" column (Yes/No/true/false/1/0)
+    const refundedVal = (row['Refunded'] || row['refunded'] || '').toString().toLowerCase().trim();
+    if (refundedVal === 'yes' || refundedVal === 'true' || refundedVal === '1') return true;
+
+    // "Refunded At" timestamp means it was refunded
+    const refundedAt = (row['Refunded At'] || row['refunded_at'] || row['Refund Date'] || '').toString().trim();
+    if (refundedAt && refundedAt !== '0' && refundedAt.toLowerCase() !== 'null') return true;
+
+    // Disposition column (ActBlue uses "refunded" as a disposition value)
+    const disposition = (row['Disposition'] || row['disposition'] || '').toString().toLowerCase().trim();
+    if (disposition === 'refunded' || disposition === 'refund' || disposition === 'voided') return true;
+
+    // Status column
+    const status = (row['Status'] || row['status'] || '').toString().toLowerCase().trim();
+    if (status === 'refunded' || status === 'refund' || status === 'voided' || status === 'chargeback') return true;
+
+    return false;
+  };
+
+  let refundedCount = 0;
 
   const insertMany = db.transaction(() => {
     for (const row of parsed.data as Record<string, string>[]) {
-      const amount = parseFloat(row['Amount'] || row['amount'] || '0');
+      const rawAmount = parseFloat(row['Amount'] || row['amount'] || '0');
       const dateStr = row['Date'] || row['date'] || row['Payment Date'] || '';
       const refcode = row['Refcode'] || row['refcode'] || row['Reference Code'] || '';
       const recipient = row['Recipient'] || row['recipient'] || '';
@@ -287,7 +312,16 @@ export function parseActBlueCsv(csvText: string, filename: string, knownShortCod
       const fundraisingPage = row['Fundraising Page'] || '';
       const recurrenceNumber = parseInt(row['Recurrence Number'] || '1', 10) || 1;
 
-      if (!dateStr || amount <= 0) continue;
+      if (!dateStr) continue;
+
+      // Detect refund: either explicit refund flag, or negative amount
+      const refunded = isRefundRow(row) || rawAmount < 0;
+      const amount = Math.abs(rawAmount); // store absolute value; flag indicates refund
+
+      // Skip zero-amount rows (not useful)
+      if (amount === 0) continue;
+
+      if (refunded) refundedCount++;
 
       const date = normalizeDate(dateStr.split(' ')[0]); // strip time
 
@@ -313,16 +347,21 @@ export function parseActBlueCsv(csvText: string, filename: string, knownShortCod
 
       if (!clientId) continue;
 
+      const refundedFlag = refunded ? 1 : 0;
       if (receiptId) {
-        insertRevenue.run(date, clientId, refcode, amount, donorName, recipient, receiptId, fundraisingPage, recurrenceNumber);
+        insertRevenue.run(date, clientId, refcode, amount, donorName, recipient, receiptId, fundraisingPage, recurrenceNumber, refundedFlag);
       } else {
-        insertRevenueNoReceipt.run(date, clientId, refcode, amount, donorName, recipient, fundraisingPage, recurrenceNumber);
+        insertRevenueNoReceipt.run(date, clientId, refcode, amount, donorName, recipient, fundraisingPage, recurrenceNumber, refundedFlag);
       }
       rowsProcessed++;
     }
   });
 
   insertMany();
+
+  if (refundedCount > 0) {
+    console.log(`[ActBlue CSV] Flagged ${refundedCount} refunded rows in ${filename}`);
+  }
 
   db.prepare('INSERT INTO uploads (filename, upload_type, rows_processed) VALUES (?, ?, ?)').run(
     filename, 'actblue', rowsProcessed
@@ -386,7 +425,7 @@ function recalculateSummaries() {
   const revenueData = db.prepare(`
     SELECT date, client_id, SUM(amount) as total_revenue
     FROM revenue
-    WHERE fundraising_page LIKE '%fbig%'
+    WHERE fundraising_page LIKE '%fbig%' AND refunded = 0
     GROUP BY date, client_id
   `).all() as { date: string; client_id: number; total_revenue: number }[];
 

@@ -123,10 +123,29 @@ function initializeSchema(db: Database.Database) {
     // Column already exists
   }
 
+  // Add refunded flag to revenue (1 = refunded, 0 = valid contribution)
+  try {
+    db.exec(`ALTER TABLE revenue ADD COLUMN refunded INTEGER NOT NULL DEFAULT 0`);
+  } catch {
+    // Column already exists
+  }
+
   // Migration: add meta_ad_id and remove the overly strict UNIQUE(date, ad_name) constraint
   // SQLite can't ALTER constraints, so we recreate the table if it still has the old constraint
   try {
     db.exec(`ALTER TABLE ad_spend ADD COLUMN meta_ad_id TEXT`);
+  } catch {
+    // Column already exists
+  }
+
+  // Video engagement metrics (for Hook Rate + Retention Rate)
+  try {
+    db.exec(`ALTER TABLE ad_spend ADD COLUMN video_3s_views INTEGER NOT NULL DEFAULT 0`);
+  } catch {
+    // Column already exists
+  }
+  try {
+    db.exec(`ALTER TABLE ad_spend ADD COLUMN video_thruplays INTEGER NOT NULL DEFAULT 0`);
   } catch {
     // Column already exists
   }

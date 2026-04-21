@@ -68,7 +68,7 @@ export async function POST(request: NextRequest) {
       FROM revenue r
       JOIN clients c ON c.id = r.client_id
       WHERE r.refcode IS NOT NULL AND r.refcode != '' AND c.active = 1 AND c.is_ad_client = 1
-        AND r.fundraising_page LIKE '%fbig%'
+        AND r.fundraising_page LIKE '%fbig%' AND r.refunded = 0
       GROUP BY r.refcode
     `).all(latestDate.d) as { refcode: string; total_revenue: number; revenue_3d: number }[];
 
@@ -175,7 +175,7 @@ export async function POST(request: NextRequest) {
       FROM revenue r
       JOIN clients c ON c.id = r.client_id
       WHERE r.date >= date(?, '-7 days') AND c.active = 1 AND c.is_ad_client = 1
-        AND r.fundraising_page LIKE '%fbig%'
+        AND r.fundraising_page LIKE '%fbig%' AND r.refunded = 0
         AND r.refcode IS NOT NULL AND r.refcode != ''
       GROUP BY r.date, c.short_code, campaign_type
     `).all(latestDate.d) as { date: string; short_code: string; campaign_type: string; daily_revenue: number }[];

@@ -328,6 +328,7 @@ function CampaignCard({
 
 function AdChart({ adName }: { adName: string }) {
   const [data, setData] = useState<{ date: string; spend: number; revenue: number; roi: number; results: number }[]>([]);
+  const [video, setVideo] = useState<{ has_data: boolean; hook_rate: number; retention_rate: number; impressions: number; views_3s: number; thruplays: number } | null>(null);
   const [days, setDays] = useState(14);
   const [loading, setLoading] = useState(true);
 
@@ -335,7 +336,7 @@ function AdChart({ adName }: { adName: string }) {
     setLoading(true);
     fetch(`/api/ad-revenue?ad_name=${encodeURIComponent(adName)}&days=${days}`)
       .then(r => r.json())
-      .then(d => { setData(d.daily || []); setLoading(false); })
+      .then(d => { setData(d.daily || []); setVideo(d.video || null); setLoading(false); })
       .catch(() => setLoading(false));
   }, [adName, days]);
 
@@ -344,7 +345,7 @@ function AdChart({ adName }: { adName: string }) {
 
   return (
     <div className="px-4 py-2 bg-gray-900/50">
-      <div className="flex items-center gap-2 mb-2">
+      <div className="flex items-center gap-2 mb-2 flex-wrap">
         <span className="text-[10px] text-gray-500 uppercase">Daily ROI</span>
         {[7, 14, 30].map(d => (
           <button
@@ -355,6 +356,21 @@ function AdChart({ adName }: { adName: string }) {
             {d}d
           </button>
         ))}
+        {video?.has_data && (
+          <div className="ml-auto flex items-center gap-3 text-[10px]">
+            <span className="text-gray-500 uppercase">Video ({days}d):</span>
+            <span className="text-gray-400" title="3-sec plays / impressions. Higher = more people stopped scrolling.">
+              Hook Rate: <span className={`font-mono font-semibold ${video.hook_rate >= 0.25 ? 'text-green-400' : video.hook_rate >= 0.15 ? 'text-yellow-400' : 'text-red-400'}`}>
+                {(video.hook_rate * 100).toFixed(1)}%
+              </span>
+            </span>
+            <span className="text-gray-400" title="Thruplays / 3-sec plays. Higher = more viewers finished the ad.">
+              Retention: <span className={`font-mono font-semibold ${video.retention_rate >= 0.15 ? 'text-green-400' : video.retention_rate >= 0.08 ? 'text-yellow-400' : 'text-red-400'}`}>
+                {(video.retention_rate * 100).toFixed(1)}%
+              </span>
+            </span>
+          </div>
+        )}
       </div>
       <ResponsiveContainer width="100%" height={120}>
         <LineChart data={data}>
