@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { BarChart3, Zap, TrendingUp, RefreshCw, Settings as SettingsIcon, Sparkles, FileText } from 'lucide-react';
+import { BarChart3, Zap, TrendingUp, RefreshCw, Settings as SettingsIcon, Sparkles, FileText, Clock } from 'lucide-react';
 import UploadPanel from '@/components/UploadPanel';
 import DailyROI from '@/components/DailyROI';
 import AdPerformance from '@/components/AdPerformance';
@@ -9,8 +9,9 @@ import HistoricalTrends from '@/components/HistoricalTrends';
 import Settings from '@/components/Settings';
 import Insights from '@/components/Insights';
 import FormTracker from '@/components/FormTracker';
+import DonationHeatmap from '@/components/DonationHeatmap';
 
-type Tab = 'roi' | 'ads' | 'trends' | 'forms' | 'insights' | 'settings';
+type Tab = 'roi' | 'ads' | 'trends' | 'heatmap' | 'forms' | 'insights' | 'settings';
 
 export default function Dashboard() {
   const [activeTab, setActiveTab] = useState<Tab>('roi');
@@ -23,6 +24,7 @@ export default function Dashboard() {
     { id: 'roi', label: 'Daily ROI', icon: <BarChart3 size={18} /> },
     { id: 'ads', label: 'Ad Performance', icon: <Zap size={18} /> },
     { id: 'trends', label: 'Trends', icon: <TrendingUp size={18} /> },
+    { id: 'heatmap', label: 'Heatmap', icon: <Clock size={18} /> },
     { id: 'forms', label: 'Forms', icon: <FileText size={18} /> },
     { id: 'insights', label: 'Insights', icon: <Sparkles size={18} /> },
     { id: 'settings', label: 'Settings', icon: <SettingsIcon size={18} /> },
@@ -93,6 +95,7 @@ export default function Dashboard() {
           {activeTab === 'roi' && <DailyROI refreshKey={refreshKey} />}
           {activeTab === 'ads' && <AdPerformance refreshKey={refreshKey} />}
           {activeTab === 'trends' && <HistoricalTrends refreshKey={refreshKey} />}
+          {activeTab === 'heatmap' && <DonationHeatmap refreshKey={refreshKey} />}
           {activeTab === 'forms' && <FormTracker refreshKey={refreshKey} />}
           {activeTab === 'insights' && <Insights />}
           {activeTab === 'settings' && <Settings />}

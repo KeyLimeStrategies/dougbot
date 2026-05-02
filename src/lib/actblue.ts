@@ -204,21 +204,32 @@ export async function syncActBlueForCandidate(
   dateStart: string,
   dateEnd: string
 ): Promise<{ csvText: string; refundedCsvText: string; shortCode: string }> {
-  // Paid (required) - fail the whole candidate if this fails
-  const paidId = await requestCsv(creds, 'paid_contributions', dateStart, dateEnd);
-  const paidUrl = await pollForDownload(creds, paidId);
-  const csvText = await downloadCsv(paidUrl);
+  // Request both CSV types in parallel (cuts wait time nearly in half)
+  const [paidId, refundedId] = await Promise.all([
+    requestCsv(creds, 'paid_contributions', dateStart, dateEnd),
+    requestCsv(creds, 'refunded_contributions', dateStart, dateEnd).catch(err => {
+      console.error(`[ActBlue] refunded_contributions request failed for ${creds.shortCode}:`, err instanceof Error ? err.message : err);
+      return null;
+    }),
+  ]);
 
-  // Refunded (best-effort) - if this fails, log and continue with empty string
-  // so a transient failure here doesn't block the main sync
-  let refundedCsvText = '';
-  try {
-    const refundedId = await requestCsv(creds, 'refunded_contributions', dateStart, dateEnd);
-    const refundedUrl = await pollForDownload(creds, refundedId);
-    refundedCsvText = await downloadCsv(refundedUrl);
-  } catch (err) {
-    console.error(`[ActBlue] refunded_contributions sync failed for ${creds.shortCode}:`, err instanceof Error ? err.message : err);
-  }
+  // Poll both in parallel
+  const [paidUrl, refundedUrl] = await Promise.all([
+    pollForDownload(creds, paidId),
+    refundedId ? pollForDownload(creds, refundedId).catch(err => {
+      console.error(`[ActBlue] refunded_contributions poll failed for ${creds.shortCode}:`, err instanceof Error ? err.message : err);
+      return null;
+    }) : Promise.resolve(null),
+  ]);
+
+  // Download both in parallel
+  const [csvText, refundedCsvText] = await Promise.all([
+    downloadCsv(paidUrl),
+    refundedUrl ? downloadCsv(refundedUrl).catch(err => {
+      console.error(`[ActBlue] refunded_contributions download failed for ${creds.shortCode}:`, err instanceof Error ? err.message : err);
+      return '';
+    }) : Promise.resolve(''),
+  ]);
 
   return { csvText, refundedCsvText, shortCode: creds.shortCode };
 }

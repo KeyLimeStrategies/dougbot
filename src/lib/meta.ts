@@ -162,11 +162,12 @@ async function fetchCampaignBudgets(config: MetaConfig): Promise<{ id: string; n
 export async function syncMetaAds(dateStart: string, dateEnd: string): Promise<MetaSyncResult> {
   const config = getMetaConfig();
 
-  // Fetch insights, ad statuses, and campaign budgets in parallel
-  // Run sequentially to avoid Meta API rate limits
+  // Insights must finish first (heaviest call). Statuses + budgets run in parallel after.
   const ads = await fetchAdInsights(config, dateStart, dateEnd);
-  const adStatuses = await fetchAdStatuses(config).catch(() => []);
-  const campaignBudgets = await fetchCampaignBudgets(config).catch(() => []);
+  const [adStatuses, campaignBudgets] = await Promise.all([
+    fetchAdStatuses(config).catch(() => []),
+    fetchCampaignBudgets(config).catch(() => []),
+  ]);
 
   const db = getDb();
 

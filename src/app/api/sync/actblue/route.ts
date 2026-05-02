@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { syncAllActBlue, getActBlueCredentials, syncActBlueForCandidate, SyncResult } from '@/lib/actblue';
-import { parseActBlueCsv, parseActBlueRefundsCsv } from '@/lib/parsers';
+import { parseActBlueCsv, parseActBlueRefundsCsv, recalculateSummaries } from '@/lib/parsers';
 
 export async function POST(request: NextRequest) {
   try {
@@ -33,12 +33,13 @@ export async function POST(request: NextRequest) {
 
       try {
         const { csvText, refundedCsvText, shortCode } = await syncActBlueForCandidate(creds, date_start, actblue_date_end);
-        const parsed = parseActBlueCsv(csvText, `actblue_${shortCode}_${date_start}_${date_end}.csv`, shortCode);
+        const parsed = parseActBlueCsv(csvText, `actblue_${shortCode}_${date_start}_${date_end}.csv`, shortCode, true);
         // Apply refunds (flags existing rows as refunded; inserts standalone if no match)
         const refundResult = parseActBlueRefundsCsv(
           refundedCsvText,
           `actblue_refunds_${shortCode}_${date_start}_${date_end}.csv`,
           shortCode,
+          true,
         );
         results.push({
           shortCode,
@@ -61,11 +62,12 @@ export async function POST(request: NextRequest) {
       // Parse and store each CSV (paid + refunds)
       for (const { csvText, refundedCsvText, shortCode } of csvTexts) {
         try {
-          const parsed = parseActBlueCsv(csvText, `actblue_${shortCode}_${date_start}_${date_end}.csv`, shortCode);
+          const parsed = parseActBlueCsv(csvText, `actblue_${shortCode}_${date_start}_${date_end}.csv`, shortCode, true);
           const refundResult = parseActBlueRefundsCsv(
             refundedCsvText,
             `actblue_refunds_${shortCode}_${date_start}_${date_end}.csv`,
             shortCode,
+            true,
           );
           results.push({
             shortCode,
@@ -85,6 +87,10 @@ export async function POST(request: NextRequest) {
 
       results.push(...errors);
     }
+
+    // Recalculate summaries ONCE after all clients are processed
+    // (individual parsers skip recalc via skipRecalc=true)
+    recalculateSummaries();
 
     const totalProcessed = results.filter(r => r.success).reduce((sum, r) => sum + (r.rowsProcessed || 0), 0);
     const allSuccess = results.every(r => r.success);

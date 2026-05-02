@@ -130,6 +130,13 @@ function initializeSchema(db: Database.Database) {
     // Column already exists
   }
 
+  // Store contribution hour (0-23, Eastern Time) for time-of-day heatmap
+  try {
+    db.exec(`ALTER TABLE revenue ADD COLUMN contribution_hour INTEGER`);
+  } catch {
+    // Column already exists
+  }
+
   // Migration: add meta_ad_id and remove the overly strict UNIQUE(date, ad_name) constraint
   // SQLite can't ALTER constraints, so we recreate the table if it still has the old constraint
   try {

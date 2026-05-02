@@ -233,7 +233,7 @@ export function parseNumeroCsv(csvText: string, filename: string): { rowsProcess
   return { rowsProcessed, errors };
 }
 
-export function parseActBlueCsv(csvText: string, filename: string, knownShortCode?: string): { rowsProcessed: number; errors: string[] } {
+export function parseActBlueCsv(csvText: string, filename: string, knownShortCode?: string, skipRecalc = false): { rowsProcessed: number; errors: string[] } {
   const db = getDb();
   const errors: string[] = [];
 
@@ -248,20 +248,21 @@ export function parseActBlueCsv(csvText: string, filename: string, knownShortCod
   }
 
   const insertRevenue = db.prepare(`
-    INSERT INTO revenue (date, client_id, refcode, amount, donor_name, member_code, receipt_id, fundraising_page, recurrence_number, refunded)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO revenue (date, client_id, refcode, amount, donor_name, member_code, receipt_id, fundraising_page, recurrence_number, refunded, contribution_hour)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(receipt_id) DO UPDATE SET
       amount = excluded.amount,
       refcode = excluded.refcode,
       fundraising_page = excluded.fundraising_page,
       recurrence_number = excluded.recurrence_number,
-      refunded = excluded.refunded
+      refunded = excluded.refunded,
+      contribution_hour = excluded.contribution_hour
   `);
 
   // Fallback for rows without receipt_id (manual uploads)
   const insertRevenueNoReceipt = db.prepare(`
-    INSERT INTO revenue (date, client_id, refcode, amount, donor_name, member_code, fundraising_page, recurrence_number, refunded)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO revenue (date, client_id, refcode, amount, donor_name, member_code, fundraising_page, recurrence_number, refunded, contribution_hour)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   let rowsProcessed = 0;
@@ -324,6 +325,8 @@ export function parseActBlueCsv(csvText: string, filename: string, knownShortCod
       if (refunded) refundedCount++;
 
       const date = normalizeDate(dateStr.split(' ')[0]); // strip time
+      // Extract contribution hour (Eastern Time) for time-of-day heatmap
+      const contributionHour = extractHourET(dateStr);
 
       let clientId: number | null = null;
 
@@ -349,9 +352,9 @@ export function parseActBlueCsv(csvText: string, filename: string, knownShortCod
 
       const refundedFlag = refunded ? 1 : 0;
       if (receiptId) {
-        insertRevenue.run(date, clientId, refcode, amount, donorName, recipient, receiptId, fundraisingPage, recurrenceNumber, refundedFlag);
+        insertRevenue.run(date, clientId, refcode, amount, donorName, recipient, receiptId, fundraisingPage, recurrenceNumber, refundedFlag, contributionHour);
       } else {
-        insertRevenueNoReceipt.run(date, clientId, refcode, amount, donorName, recipient, fundraisingPage, recurrenceNumber, refundedFlag);
+        insertRevenueNoReceipt.run(date, clientId, refcode, amount, donorName, recipient, fundraisingPage, recurrenceNumber, refundedFlag, contributionHour);
       }
       rowsProcessed++;
     }
@@ -363,52 +366,14 @@ export function parseActBlueCsv(csvText: string, filename: string, knownShortCod
     console.log(`[ActBlue CSV] Flagged ${refundedCount} refunded rows in ${filename}`);
   }
 
-  // Post-import: for every refunded row, find and flag the matching ORIGINAL
-  // positive row (same client/amount/donor/refcode within 30 days) as refunded.
-  // Handles ActBlue's pattern of emitting a separate refund row without updating
-  // the original charge. Matches one-for-one by id so duplicate donations aren't
-  // all flagged when only one was refunded.
-  const findOriginal = db.prepare(`
-    SELECT id FROM revenue
-    WHERE refunded = 0
-      AND client_id = ?
-      AND amount = ?
-      AND donor_name = ?
-      AND refcode = ?
-      AND date <= ?
-      AND date >= date(?, '-30 days')
-    ORDER BY date DESC
-    LIMIT 1
-  `);
-  const flagById = db.prepare('UPDATE revenue SET refunded = 1 WHERE id = ?');
-  let matchedOriginals = 0;
-
-  const matchRefunds = db.transaction(() => {
-    const refundedRows = db.prepare(`
-      SELECT id, client_id, refcode, donor_name, amount, date
-      FROM revenue WHERE refunded = 1
-    `).all() as { id: number; client_id: number; refcode: string; donor_name: string; amount: number; date: string }[];
-
-    for (const r of refundedRows) {
-      // Skip matching to itself (the refund row is already flagged)
-      const original = findOriginal.get(r.client_id, r.amount, r.donor_name, r.refcode, r.date, r.date) as { id: number } | undefined;
-      if (original && original.id !== r.id) {
-        flagById.run(original.id);
-        matchedOriginals++;
-      }
-    }
-  });
-  matchRefunds();
-
-  if (matchedOriginals > 0) {
-    console.log(`[ActBlue CSV] Matched and flagged ${matchedOriginals} original donations as refunded`);
-  }
+  // Refund matching is handled by parseActBlueRefundsCsv (syncs refunded_contributions
+  // CSV separately). No need to scan all refunded rows here.
 
   db.prepare('INSERT INTO uploads (filename, upload_type, rows_processed) VALUES (?, ?, ?)').run(
     filename, 'actblue', rowsProcessed
   );
 
-  recalculateSummaries();
+  if (!skipRecalc) recalculateSummaries();
 
   return { rowsProcessed, errors };
 }
@@ -420,7 +385,7 @@ export function parseActBlueCsv(csvText: string, filename: string, knownShortCod
 //   1. Same client, same amount, same donor_name, same refcode, within 60 days
 //   2. Same client, same amount, same donor_name, within 60 days (drop refcode if not in refund CSV)
 // If no match found, we still insert a standalone refunded row for audit/accounting.
-export function parseActBlueRefundsCsv(csvText: string, filename: string, knownShortCode?: string): { rowsProcessed: number; rowsFlagged: number; rowsInserted: number; errors: string[] } {
+export function parseActBlueRefundsCsv(csvText: string, filename: string, knownShortCode?: string, skipRecalc = false): { rowsProcessed: number; rowsFlagged: number; rowsInserted: number; errors: string[] } {
   const db = getDb();
   const errors: string[] = [];
 
@@ -445,16 +410,18 @@ export function parseActBlueRefundsCsv(csvText: string, filename: string, knownS
     console.log(`[ActBlue refunded_contributions CSV] Columns (${Object.keys(firstRow).length}): ${Object.keys(firstRow).join(', ')}`);
   }
 
-  // Match strategies (most specific → least)
+  // Match strategies (most specific → least). donor_name comparison is
+  // case-insensitive + whitespace-normalized in case ActBlue formats names
+  // differently between paid_contributions and refunded_contributions.
   const findWithRefcode = db.prepare(`
     SELECT id FROM revenue
     WHERE refunded = 0
       AND client_id = ?
       AND ABS(amount - ?) < 0.01
-      AND donor_name = ?
+      AND LOWER(TRIM(donor_name)) = LOWER(TRIM(?))
       AND refcode = ?
-      AND date >= date(?, '-60 days')
-      AND date <= ?
+      AND date >= date(?, '-90 days')
+      AND date <= date(?, '+1 day')
     ORDER BY date DESC LIMIT 1
   `);
   const findWithoutRefcode = db.prepare(`
@@ -462,9 +429,9 @@ export function parseActBlueRefundsCsv(csvText: string, filename: string, knownS
     WHERE refunded = 0
       AND client_id = ?
       AND ABS(amount - ?) < 0.01
-      AND donor_name = ?
-      AND date >= date(?, '-60 days')
-      AND date <= ?
+      AND LOWER(TRIM(donor_name)) = LOWER(TRIM(?))
+      AND date >= date(?, '-90 days')
+      AND date <= date(?, '+1 day')
     ORDER BY date DESC LIMIT 1
   `);
   const flagById = db.prepare('UPDATE revenue SET refunded = 1 WHERE id = ?');
@@ -532,9 +499,33 @@ export function parseActBlueRefundsCsv(csvText: string, filename: string, knownS
     filename, 'actblue_refunds', rowsProcessed
   );
 
-  recalculateSummaries();
+  if (!skipRecalc) recalculateSummaries();
 
   return { rowsProcessed, rowsFlagged, rowsInserted, errors };
+}
+
+// Extract hour (0-23) in Eastern Time from a datetime string.
+// ActBlue timestamps are typically Eastern or UTC. We parse the raw time
+// part and treat it as Eastern (ActBlue uses Eastern for their timestamps).
+// Returns null if no time component found.
+function extractHourET(dateStr: string): number | null {
+  if (!dateStr) return null;
+
+  // Format: "YYYY-MM-DD HH:MM:SS" or "YYYY-MM-DD HH:MM"
+  const isoMatch = dateStr.match(/\d{4}-\d{2}-\d{2}\s+(\d{1,2}):\d{2}/);
+  if (isoMatch) return parseInt(isoMatch[1], 10);
+
+  // Format: "MM/DD/YYYY HH:MM:SS AM/PM" or "MM/DD/YYYY HH:MM AM/PM"
+  const ampmMatch = dateStr.match(/\d{1,2}\/\d{1,2}\/\d{4}\s+(\d{1,2}):(\d{2})(?::\d{2})?\s*(AM|PM)/i);
+  if (ampmMatch) {
+    let hour = parseInt(ampmMatch[1], 10);
+    const ampm = ampmMatch[3].toUpperCase();
+    if (ampm === 'PM' && hour !== 12) hour += 12;
+    if (ampm === 'AM' && hour === 12) hour = 0;
+    return hour;
+  }
+
+  return null;
 }
 
 function normalizeDate(dateStr: string): string {
@@ -568,7 +559,7 @@ function normalizeNumeroDate(dateStr: string): string {
   return normalizeDate(dateStr);
 }
 
-function recalculateSummaries() {
+export function recalculateSummaries() {
   const db = getDb();
 
   // Load per-client fee rates
