@@ -59,7 +59,7 @@ export async function GET(request: NextRequest) {
         c.fee_rate,
         MAX(a.campaign_type) as campaign_type,
         MAX(a.batch) as batch,
-        MAX(a.ad_delivery) as ad_delivery,
+        (SELECT sub.ad_delivery FROM ad_spend sub WHERE sub.ad_name = a.ad_name AND sub.ad_delivery IS NOT NULL AND sub.ad_delivery != '' ORDER BY sub.date DESC LIMIT 1) as ad_delivery,
         MAX(a.attribution_setting) as attribution_setting,
         SUM(a.spend) as total_spend,
         SUM(CASE WHEN a.date >= ? THEN a.spend ELSE 0 END) as spend_3d,
