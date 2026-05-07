@@ -420,6 +420,18 @@ function CampaignAdsTable({ ads, campaign, fmt, hidePaused }: { ads: AdPerf[]; c
     if (period === '14d') return (ad as any).results_14d ?? 0;
     return ad.total_results;
   };
+  const getRevenue = (ad: AdPerf) => {
+    if (period === '3d') return ad.actblue_revenue_3d;
+    if (period === '7d') return ad.actblue_revenue_7d;
+    if (period === '14d') return ad.actblue_revenue_14d;
+    return ad.actblue_revenue;
+  };
+  const getRoi = (ad: AdPerf) => {
+    if (period === '3d') return ad.roi_3d;
+    if (period === '7d') return ad.roi_7d;
+    if (period === '14d') return ad.roi_14d;
+    return ad.roi;
+  };
 
   return (
     <div className="border-t border-gray-800/50 px-4 py-2">
@@ -441,8 +453,8 @@ function CampaignAdsTable({ ads, campaign, fmt, hidePaused }: { ads: AdPerf[]; c
             <th className="w-5 py-1 px-1"></th>
             <th className="text-left py-1 px-1">Ad</th>
             <th className="text-right py-1 px-1">Spend{period !== 'all' ? ` (${period})` : ''}</th>
-            <th className="text-right py-1 px-1">AB Rev</th>
-            <th className="text-right py-1 px-1">ROI</th>
+            <th className="text-right py-1 px-1">AB Rev{period !== 'all' ? ` (${period})` : ''}</th>
+            <th className="text-right py-1 px-1">ROI{period !== 'all' ? ` (${period})` : ''}</th>
             <th className="text-right py-1 px-1"># Contributions{period !== 'all' ? ` (${period})` : ''}</th>
             <th className="text-right py-1 px-1">CPP</th>
             <th className="text-right py-1 px-1">Freq</th>
@@ -455,7 +467,7 @@ function CampaignAdsTable({ ads, campaign, fmt, hidePaused }: { ads: AdPerf[]; c
           {campaignAds.map(ad => (
             <AdRow key={ad.ad_name} ad={ad} fmt={fmt} expanded={expandedAd === ad.ad_name}
               onToggle={() => setExpandedAd(expandedAd === ad.ad_name ? null : ad.ad_name)}
-              periodSpend={getSpend(ad)} periodResults={getResults(ad)} />
+              periodSpend={getSpend(ad)} periodResults={getResults(ad)} periodRevenue={getRevenue(ad)} periodRoi={getRoi(ad)} />
           ))}
         </tbody>
       </table>
@@ -463,9 +475,11 @@ function CampaignAdsTable({ ads, campaign, fmt, hidePaused }: { ads: AdPerf[]; c
   );
 }
 
-function AdRow({ ad, fmt, expanded, onToggle, periodSpend, periodResults }: { ad: AdPerf; fmt: (n: number) => string; expanded: boolean; onToggle: () => void; periodSpend?: number; periodResults?: number }) {
+function AdRow({ ad, fmt, expanded, onToggle, periodSpend, periodResults, periodRevenue, periodRoi }: { ad: AdPerf; fmt: (n: number) => string; expanded: boolean; onToggle: () => void; periodSpend?: number; periodResults?: number; periodRevenue?: number; periodRoi?: number }) {
   const spend = periodSpend ?? ad.total_spend;
   const results = periodResults ?? ad.total_results;
+  const revenue = periodRevenue ?? ad.actblue_revenue;
+  const roi = periodRoi ?? ad.roi;
   return (
     <>
       <tr className={`border-t border-gray-800/30 ${ad.recommendation === 'KILL' ? 'text-red-400/80' : ''} cursor-pointer hover:bg-gray-800/30`} onClick={onToggle}>
@@ -474,11 +488,11 @@ function AdRow({ ad, fmt, expanded, onToggle, periodSpend, periodResults }: { ad
         </td>
         <td className="py-1 px-1 text-gray-300 font-mono">{ad.ad_name}</td>
         <td className="py-1 px-1 text-right text-gray-300">{fmt(spend)}</td>
-        <td className={`py-1 px-1 text-right font-mono ${ad.actblue_revenue > 0 ? 'text-green-400' : 'text-gray-600'}`}>
-          {ad.actblue_revenue > 0 ? fmt(ad.actblue_revenue) : '$0'}
+        <td className={`py-1 px-1 text-right font-mono ${revenue > 0 ? 'text-green-400' : 'text-gray-600'}`}>
+          {revenue > 0 ? fmt(revenue) : '$0'}
         </td>
-        <td className={`py-1 px-1 text-right font-mono font-medium ${ad.roi >= 1.3 ? 'text-green-400' : ad.roi > 0 && ad.roi < 1.0 ? 'text-red-400' : ad.roi >= 1.0 ? 'text-yellow-400' : 'text-gray-600'}`}>
-          {ad.roi > 0 ? `${ad.roi.toFixed(2)}x` : '-'}
+        <td className={`py-1 px-1 text-right font-mono font-medium ${roi >= 1.3 ? 'text-green-400' : roi > 0 && roi < 1.0 ? 'text-red-400' : roi >= 1.0 ? 'text-yellow-400' : 'text-gray-600'}`}>
+          {roi > 0 ? `${roi.toFixed(2)}x` : '-'}
         </td>
         <td className="py-1 px-1 text-right text-gray-300">{results}</td>
         <td className={`py-1 px-1 text-right font-mono ${(results > 0 ? spend / results : 0) > 40 ? 'text-red-400' : (results > 0 ? spend / results : 0) < 25 && results > 0 ? 'text-green-400' : 'text-gray-300'}`}>

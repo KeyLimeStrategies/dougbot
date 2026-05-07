@@ -90,6 +90,8 @@ export async function GET(request: NextRequest) {
         r.refcode,
         SUM(r.amount) as total_revenue,
         SUM(CASE WHEN r.date >= ? THEN r.amount ELSE 0 END) as revenue_72h,
+        SUM(CASE WHEN r.date >= ? THEN r.amount ELSE 0 END) as revenue_7d,
+        SUM(CASE WHEN r.date >= ? THEN r.amount ELSE 0 END) as revenue_14d,
         SUM(CASE WHEN r.date >= ? THEN r.amount ELSE 0 END) as revenue_24h,
         SUM(CASE WHEN r.date >= ? AND r.date < ? THEN r.amount ELSE 0 END) as revenue_prev_24h
       FROM revenue r
@@ -97,11 +99,11 @@ export async function GET(request: NextRequest) {
       WHERE r.refcode IS NOT NULL AND r.refcode != '' AND c.active = 1 AND c.is_ad_client = 1
         AND r.fundraising_page LIKE '%fbig%' AND r.refunded = 0 ${clientWhere}
       GROUP BY r.refcode
-    `).all(threeDaysAgoET, oneDayAgoET, twoDaysAgoET, oneDayAgoET, ...params) as { refcode: string; total_revenue: number; revenue_72h: number; revenue_24h: number; revenue_prev_24h: number }[];
+    `).all(threeDaysAgoET, sevenDaysAgoET, fourteenDaysAgoET, oneDayAgoET, twoDaysAgoET, oneDayAgoET, ...params) as { refcode: string; total_revenue: number; revenue_72h: number; revenue_7d: number; revenue_14d: number; revenue_24h: number; revenue_prev_24h: number }[];
 
-    const revenueMap = new Map<string, { total_revenue: number; revenue_72h: number; revenue_24h: number; revenue_prev_24h: number }>();
+    const revenueMap = new Map<string, { total_revenue: number; revenue_72h: number; revenue_7d: number; revenue_14d: number; revenue_24h: number; revenue_prev_24h: number }>();
     for (const r of revenueRows) {
-      revenueMap.set(r.refcode, { total_revenue: r.total_revenue, revenue_72h: r.revenue_72h, revenue_24h: r.revenue_24h, revenue_prev_24h: r.revenue_prev_24h });
+      revenueMap.set(r.refcode, { total_revenue: r.total_revenue, revenue_72h: r.revenue_72h, revenue_7d: r.revenue_7d, revenue_14d: r.revenue_14d, revenue_24h: r.revenue_24h, revenue_prev_24h: r.revenue_prev_24h });
     }
 
     // Apply KILL logic at individual ad level (using ActBlue revenue as ground truth)
@@ -122,9 +124,20 @@ export async function GET(request: NextRequest) {
       const isInactive = (ad.ad_delivery && ad.ad_delivery.toLowerCase() !== 'active')
         || (adExt.spend_24h === 0 && ad.spend_3d === 0 && adExt.last_seen < sevenDaysAgoET);
 
-      // ROI calculation
+      // Windowed revenue
+      const actblueRevenue3d = rev?.revenue_72h ?? 0;
+      const actblueRevenue7d = rev?.revenue_7d ?? 0;
+      const actblueRevenue14d = rev?.revenue_14d ?? 0;
+
+      // ROI calculation (all-time and per-window)
       const hasActBlueData = actblueRevenue > 0;
       const adRoi = spendWithFee > 0 ? actblueRevenue / spendWithFee : 0;
+      const spend3dWithFee = ad.spend_3d + (ad.spend_3d * feeRate);
+      const spend7dWithFee = (ad as any).spend_7d + ((ad as any).spend_7d * feeRate);
+      const spend14dWithFee = (ad as any).spend_14d + ((ad as any).spend_14d * feeRate);
+      const adRoi3d = spend3dWithFee > 0 ? actblueRevenue3d / spend3dWithFee : 0;
+      const adRoi7d = spend7dWithFee > 0 ? actblueRevenue7d / spend7dWithFee : 0;
+      const adRoi14d = spend14dWithFee > 0 ? actblueRevenue14d / spend14dWithFee : 0;
       const cpp = ad.total_results > 0 ? ad.total_spend / ad.total_results : Infinity;
       const cpp3d = ad.results_3d > 0 ? ad.spend_3d / ad.results_3d : Infinity;
 
@@ -201,7 +214,13 @@ export async function GET(request: NextRequest) {
         cpp_3d: cpp3d === Infinity ? 0 : cpp3d,
         frequency: ad.frequency,
         actblue_revenue: actblueRevenue,
+        actblue_revenue_3d: actblueRevenue3d,
+        actblue_revenue_7d: actblueRevenue7d,
+        actblue_revenue_14d: actblueRevenue14d,
         roi: adRoi,
+        roi_3d: adRoi3d,
+        roi_7d: adRoi7d,
+        roi_14d: adRoi14d,
         first_seen: adExt.first_seen,
         is_new: isNewAd,
         trend,

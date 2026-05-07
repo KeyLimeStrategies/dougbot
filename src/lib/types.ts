@@ -39,7 +39,13 @@ export interface AdPerformance {
   cpp_3d: number;
   frequency: number;
   actblue_revenue: number;
+  actblue_revenue_3d: number;
+  actblue_revenue_7d: number;
+  actblue_revenue_14d: number;
   roi: number;
+  roi_3d: number;
+  roi_7d: number;
+  roi_14d: number;
   first_seen: string;
   is_new: boolean;
   trend: 'up' | 'down' | 'flat' | 'new';
