@@ -28,33 +28,46 @@ export interface AdPerformance {
   ad_delivery: string;
   attribution_setting: string;
   total_spend: number;
+  spend_1d: number;
   spend_3d: number;
   spend_7d: number;
   spend_14d: number;
+  spend_custom?: number;
   total_results: number;
+  results_1d: number;
   results_3d: number;
   results_7d: number;
   results_14d: number;
+  results_custom?: number;
+  link_clicks: number;
+  link_clicks_1d: number;
+  link_clicks_3d: number;
+  link_clicks_7d: number;
+  link_clicks_14d: number;
+  link_clicks_custom?: number;
   cpp: number;
   cpp_3d: number;
   frequency: number;
   actblue_revenue: number;
+  actblue_revenue_1d: number;
   actblue_revenue_3d: number;
   actblue_revenue_7d: number;
   actblue_revenue_14d: number;
+  actblue_revenue_custom?: number;
   roi: number;
+  roi_1d: number;
   roi_3d: number;
   roi_7d: number;
   roi_14d: number;
+  roi_custom?: number;
   first_seen: string;
   is_new: boolean;
   trend: 'up' | 'down' | 'flat' | 'new';
-  recommendation: 'KILL' | 'OK';
-  kill_reason?: string;
+  recommendation: 'SCALE' | 'DROP' | 'KILL' | 'HOLD';
+  rec_reason?: string;
 }
 
-export interface CampaignPerformance {
-  campaign: string;
+export interface ClientGroup {
   client_name: string;
   short_code: string;
   ad_count: number;
@@ -67,8 +80,6 @@ export interface CampaignPerformance {
   roi_72h: number;
   cpp_72h: number;
   avg_cpp_portfolio: number;
-  recommendation: 'SCALE' | 'DROP' | 'HOLD';
-  reason: string;
   ads: string[];
 }
 

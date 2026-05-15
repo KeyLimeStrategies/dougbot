@@ -4,6 +4,12 @@ import { useState, useEffect, useMemo } from 'react';
 import { Copy, Check, RotateCw, Calendar, Clock } from 'lucide-react';
 import type { DailySummary } from '@/lib/types';
 
+function fmtSync(ts: string): string {
+  return new Date(ts + 'Z').toLocaleString('en-US', {
+    month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: 'America/New_York',
+  }) + ' ET';
+}
+
 function roasColor(roas: number): string {
   if (roas >= 1.3) return 'text-green-400';
   if (roas >= 1.0) return 'text-yellow-400';
@@ -32,7 +38,6 @@ export default function DailyROI({ refreshKey }: { refreshKey: number }) {
   const [selectedDate, setSelectedDate] = useState<string>('');
   const [days, setDays] = useState(1);
   const [mode, setMode] = useState<'days' | 'wtd' | 'range'>('days');
-  const [roiText, setRoiText] = useState('');
   const [copied, setCopied] = useState(false);
   const [excludeRecurring, setExcludeRecurring] = useState(false);
   const [showDatePicker, setShowDatePicker] = useState(false);
@@ -64,27 +69,12 @@ export default function DailyROI({ refreshKey }: { refreshKey: number }) {
     const recurParam = excludeRecurring ? '&exclude_recurring=true' : '';
     fetch(`/api/daily-roi${params}${recurParam}`)
       .then(r => r.json())
-      .then(d => {
-        setData(d);
-        if (!selectedDate && d.rows.length > 0) {
-          const dates = [...new Set(d.rows.map((r: DailySummary) => r.date))].sort().reverse();
-          if (dates.length > 0) {
-            fetchRoiText(dates[0] as string);
-          }
-        }
-      })
+      .then(setData)
       .catch(console.error);
   }, [selectedDate, days, mode, rangeStart, rangeEnd, refreshKey, excludeRecurring]);
 
-  const fetchRoiText = (date: string) => {
-    fetch(`/api/roi-text?date=${date}`)
-      .then(r => r.json())
-      .then(d => setRoiText(d.text || ''))
-      .catch(console.error);
-  };
-
   const handleCopy = () => {
-    navigator.clipboard.writeText(roiText);
+    navigator.clipboard.writeText(singleDayShareText);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
@@ -157,8 +147,43 @@ export default function DailyROI({ refreshKey }: { refreshKey: number }) {
       shareText += `${c.client_name} ${rev}/${spend}= ${roas}\n`;
     }
 
+    // Add sync timestamps to share text
+    if (lastSync.meta || lastSync.actblue) {
+      shareText += '\n';
+      if (lastSync.meta) shareText += `Meta: ${fmtSync(lastSync.meta)}\n`;
+      if (lastSync.actblue) shareText += `ActBlue: ${fmtSync(lastSync.actblue)}\n`;
+    }
+
     return { clients, portfolio: { ...portfolio, true_roas: portfolioRoas }, shareText, rangeLabel };
-  }, [data.rows, isMultiDay, dates]);
+  }, [data.rows, isMultiDay, dates, lastSync]);
+
+  // Generate single-day quick share text (respects recurring toggle + includes sync timestamps)
+  const singleDayShareText = useMemo(() => {
+    if (isMultiDay || dates.length === 0) return '';
+    const date = dates[0];
+    const dateRows = data.rows.filter(r => r.date === date).sort((a, b) => b.true_roas - a.true_roas);
+    if (dateRows.length === 0) return '';
+
+    const [, m, d] = date.split('-');
+    const shortDate = `${parseInt(m)}/${parseInt(d)}`;
+    const label = excludeRecurring ? `${shortDate} ROI (with fee, first-time only):\n` : `${shortDate} ROI (with fee):\n`;
+
+    let text = label;
+    for (const row of dateRows) {
+      const rev = Math.round(row.total_revenue);
+      const spend = Math.round(row.spend_with_fee);
+      const roas = row.true_roas > 0 && isFinite(row.true_roas) ? row.true_roas.toFixed(3) : (spend === 0 ? 'N/A' : '0.000');
+      text += `${row.client_name} ${rev}/${spend}= ${roas}\n`;
+    }
+
+    if (lastSync.meta || lastSync.actblue) {
+      text += '\n';
+      if (lastSync.meta) text += `Meta: ${fmtSync(lastSync.meta)}\n`;
+      if (lastSync.actblue) text += `ActBlue: ${fmtSync(lastSync.actblue)}\n`;
+    }
+
+    return text;
+  }, [data.rows, isMultiDay, dates, excludeRecurring, lastSync]);
 
   const [rangeCopied, setRangeCopied] = useState(false);
   const handleRangeCopy = () => {
@@ -332,7 +357,7 @@ export default function DailyROI({ refreshKey }: { refreshKey: number }) {
       )}
 
       {/* Single-day Quick Share (only when Latest or specific date selected) */}
-      {!isMultiDay && roiText && (
+      {!isMultiDay && singleDayShareText && (
         <div className="bg-gray-800 rounded-lg p-4 mb-4 font-mono text-sm">
           <div className="flex items-center justify-between mb-2">
             <span className="text-gray-400 text-xs uppercase tracking-wide">Quick Share Format</span>
@@ -341,7 +366,7 @@ export default function DailyROI({ refreshKey }: { refreshKey: number }) {
               {copied ? 'Copied' : 'Copy'}
             </button>
           </div>
-          <pre className="text-lime-300 whitespace-pre-wrap">{roiText}</pre>
+          <pre className="text-lime-300 whitespace-pre-wrap">{singleDayShareText}</pre>
         </div>
       )}
 
@@ -358,7 +383,7 @@ export default function DailyROI({ refreshKey }: { refreshKey: number }) {
           return (
             <div key={date} className="mb-6">
               <button
-                onClick={() => { setSelectedDate(date); fetchRoiText(date); }}
+                onClick={() => setSelectedDate(date)}
                 className="text-sm font-medium text-gray-400 mb-2 hover:text-white"
               >
                 {parseInt(month)}/{parseInt(day)}

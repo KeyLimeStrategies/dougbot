@@ -91,18 +91,21 @@ export async function testActBlueCredentials(clientUuid: string, clientSecret: s
   return res.ok || res.status === 202;
 }
 
-// Retry wrapper for transient errors (503, 502, network issues)
+// Retry wrapper for transient errors (503, 502, 429, network issues)
 async function fetchWithRetry(
   url: string,
   options: RequestInit,
-  maxRetries = 3,
+  maxRetries = 4,
   baseDelayMs = 5000
 ): Promise<Response> {
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     const res = await fetch(url, options);
     if (res.ok || res.status === 202) return res;
-    if ((res.status === 502 || res.status === 503) && attempt < maxRetries) {
-      const delay = baseDelayMs * Math.pow(2, attempt); // 5s, 10s, 20s
+    if ((res.status === 429 || res.status === 502 || res.status === 503) && attempt < maxRetries) {
+      // Longer delays for 503/429 (rate limiting) with jitter to desynchronize retries
+      const jitter = Math.random() * 3000;
+      const delay = baseDelayMs * Math.pow(2, attempt) + jitter; // ~5s, ~10s, ~20s, ~40s + jitter
+      console.warn(`[ActBlue] ${res.status} on attempt ${attempt + 1}/${maxRetries}, retrying in ${Math.round(delay / 1000)}s...`);
       await new Promise(resolve => setTimeout(resolve, delay));
       continue;
     }
@@ -234,7 +237,7 @@ export async function syncActBlueForCandidate(
   return { csvText, refundedCsvText, shortCode: creds.shortCode };
 }
 
-// Sync all configured candidates
+// Sync all configured candidates (with concurrency limit to avoid ActBlue 503 rate-limiting)
 export async function syncAllActBlue(
   dateStart: string,
   dateEnd: string
@@ -245,24 +248,35 @@ export async function syncAllActBlue(
     throw new Error('No ActBlue credentials configured. Add them via Settings or .env.local');
   }
 
-  const results = await Promise.allSettled(
-    creds.map(c => syncActBlueForCandidate(c, dateStart, dateEnd))
-  );
-
+  // Process max 2 candidates at a time to avoid ActBlue 503 rate-limiting.
+  // Each candidate makes 2 CSV requests (paid + refunded), so 2 candidates = 4 concurrent requests.
+  const CONCURRENCY = 2;
   const csvTexts: { csvText: string; refundedCsvText: string; shortCode: string }[] = [];
   const errors: SyncResult[] = [];
 
-  results.forEach((result, i) => {
-    if (result.status === 'fulfilled') {
-      csvTexts.push(result.value);
-    } else {
-      errors.push({
-        shortCode: creds[i].shortCode,
-        success: false,
-        error: result.reason?.message || 'Unknown error',
-      });
+  for (let i = 0; i < creds.length; i += CONCURRENCY) {
+    const batch = creds.slice(i, i + CONCURRENCY);
+    const results = await Promise.allSettled(
+      batch.map(c => syncActBlueForCandidate(c, dateStart, dateEnd))
+    );
+
+    results.forEach((result, j) => {
+      if (result.status === 'fulfilled') {
+        csvTexts.push(result.value);
+      } else {
+        errors.push({
+          shortCode: batch[j].shortCode,
+          success: false,
+          error: result.reason?.message || 'Unknown error',
+        });
+      }
+    });
+
+    // Delay between batches to avoid rate limiting
+    if (i + CONCURRENCY < creds.length) {
+      await new Promise(resolve => setTimeout(resolve, 2000));
     }
-  });
+  }
 
   return { csvTexts, errors };
 }
