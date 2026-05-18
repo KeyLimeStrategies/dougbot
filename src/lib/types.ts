@@ -45,6 +45,12 @@ export interface AdPerformance {
   link_clicks_7d: number;
   link_clicks_14d: number;
   link_clicks_custom?: number;
+  actblue_donations: number;
+  actblue_donations_1d: number;
+  actblue_donations_3d: number;
+  actblue_donations_7d: number;
+  actblue_donations_14d: number;
+  actblue_donations_custom?: number;
   cpp: number;
   cpp_3d: number;
   frequency: number;

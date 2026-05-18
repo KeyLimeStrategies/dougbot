@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
-import { AlertTriangle, TrendingUp, TrendingDown, Minus, ChevronDown, ChevronRight, ArrowUp, ArrowDown, BarChart3, Search, Calendar } from 'lucide-react';
+import { AlertTriangle, TrendingUp, TrendingDown, Minus, ChevronDown, ChevronRight, ArrowUp, ArrowDown, BarChart3, Search, Calendar, Filter, X } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
 import type { AdPerformance as AdPerf, ClientGroup } from '@/lib/types';
 
@@ -33,6 +33,11 @@ export default function AdPerformance({ refreshKey }: { refreshKey: number }) {
   const [checkedAds, setCheckedAds] = useState<Set<string>>(new Set());
   const [activeTab, setActiveTab] = useState<'clients' | 'kill'>('clients');
   const [hidePaused, setHidePaused] = useState(true);
+  const [showFilters, setShowFilters] = useState(false);
+  const [filterMinRoi, setFilterMinRoi] = useState('');
+  const [filterMaxRoi, setFilterMaxRoi] = useState('');
+  const [filterMinSpend, setFilterMinSpend] = useState('');
+  const [filterMinDonations, setFilterMinDonations] = useState('');
 
   useEffect(() => {
     const params = new URLSearchParams();
@@ -48,18 +53,45 @@ export default function AdPerformance({ refreshKey }: { refreshKey: number }) {
 
   // Search filtering
   const searchLower = searchQuery.toLowerCase().trim();
-  const filteredAds = searchLower
+  const searchedAds = searchLower
     ? activeAds.filter(a => a.ad_name.toLowerCase().includes(searchLower))
     : activeAds;
 
-  // Filter client groups based on search
+  // Performance filters
+  const hasActiveFilters = !!(filterMinRoi || filterMaxRoi || filterMinSpend || filterMinDonations);
+  const performanceFilter = useMemo(() => ({
+    minRoi: filterMinRoi ? parseFloat(filterMinRoi) : null,
+    maxRoi: filterMaxRoi ? parseFloat(filterMaxRoi) : null,
+    minSpend: filterMinSpend ? parseFloat(filterMinSpend) : null,
+    minDonations: filterMinDonations ? parseInt(filterMinDonations) : null,
+  }), [filterMinRoi, filterMaxRoi, filterMinSpend, filterMinDonations]);
+
+  const filteredAds = useMemo(() => {
+    if (!hasActiveFilters) return searchedAds;
+    return searchedAds.filter(ad => {
+      if (performanceFilter.minRoi !== null && ad.roi < performanceFilter.minRoi) return false;
+      if (performanceFilter.maxRoi !== null && ad.roi > performanceFilter.maxRoi) return false;
+      if (performanceFilter.minSpend !== null && ad.total_spend < performanceFilter.minSpend) return false;
+      if (performanceFilter.minDonations !== null && ad.actblue_donations < performanceFilter.minDonations) return false;
+      return true;
+    });
+  }, [searchedAds, performanceFilter, hasActiveFilters]);
+
+  const clearFilters = () => {
+    setFilterMinRoi('');
+    setFilterMaxRoi('');
+    setFilterMinSpend('');
+    setFilterMinDonations('');
+  };
+
+  // Filter client groups based on search + performance filters
   const filteredClients = useMemo(() => {
-    if (!searchLower) return data.clients;
+    if (!searchLower && !hasActiveFilters) return data.clients;
     return data.clients.filter(c => {
       const adSet = new Set(c.ads);
       return filteredAds.some(a => adSet.has(a.ad_name));
     });
-  }, [data.clients, filteredAds, searchLower]);
+  }, [data.clients, filteredAds, searchLower, hasActiveFilters]);
 
   const killAds = activeAds.filter(a => a.recommendation === 'KILL');
   const dropAds = activeAds.filter(a => a.recommendation === 'DROP');
@@ -84,8 +116,8 @@ export default function AdPerformance({ refreshKey }: { refreshKey: number }) {
 
   const fmt = (n: number) => `$${n.toFixed(2)}`;
 
-  // Auto-expand all clients when searching
-  const isSearchActive = searchLower.length > 0;
+  // Auto-expand all clients when searching or filtering
+  const isSearchActive = searchLower.length > 0 || hasActiveFilters;
 
   return (
     <div>
@@ -148,6 +180,31 @@ export default function AdPerformance({ refreshKey }: { refreshKey: number }) {
           {(data.summary.paused_ads ?? 0) > 0 && <span className="text-gray-500">({data.summary.paused_ads})</span>}
         </button>
 
+        {/* Performance filter toggle */}
+        <button
+          onClick={() => setShowFilters(!showFilters)}
+          className={`flex items-center gap-1.5 px-3 py-1 text-xs rounded-full border transition-colors ${
+            hasActiveFilters
+              ? 'bg-lime-900/30 border-lime-700 text-lime-300'
+              : showFilters
+                ? 'bg-gray-700 border-gray-600 text-gray-300'
+                : 'bg-gray-800 border-gray-700 text-gray-400 hover:border-gray-600'
+          }`}
+        >
+          <Filter size={11} />
+          Filters
+          {hasActiveFilters && (
+            <span className="bg-lime-600 text-black text-[9px] font-bold rounded-full w-4 h-4 flex items-center justify-center">
+              {[filterMinRoi, filterMaxRoi, filterMinSpend, filterMinDonations].filter(Boolean).length}
+            </span>
+          )}
+        </button>
+        {hasActiveFilters && (
+          <button onClick={clearFilters} className="text-gray-500 hover:text-gray-300 text-xs">
+            <X size={12} />
+          </button>
+        )}
+
         {/* Tab toggle */}
         <div className="flex ml-auto bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
           <button
@@ -164,6 +221,62 @@ export default function AdPerformance({ refreshKey }: { refreshKey: number }) {
           </button>
         </div>
       </div>
+
+      {/* Filter panel */}
+      {showFilters && (
+        <div className="bg-gray-800/50 border border-gray-700 rounded-lg px-4 py-3 mb-4 flex items-center gap-4 flex-wrap">
+          <span className="text-[10px] text-gray-500 uppercase font-medium">Filter by</span>
+          <div className="flex items-center gap-1.5">
+            <label className="text-xs text-gray-400">ROI &ge;</label>
+            <input
+              type="number"
+              step="0.1"
+              value={filterMinRoi}
+              onChange={e => setFilterMinRoi(e.target.value)}
+              placeholder="e.g. 1.1"
+              className="bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs text-white w-20 focus:border-lime-500 focus:outline-none"
+            />
+          </div>
+          <div className="flex items-center gap-1.5">
+            <label className="text-xs text-gray-400">ROI &le;</label>
+            <input
+              type="number"
+              step="0.1"
+              value={filterMaxRoi}
+              onChange={e => setFilterMaxRoi(e.target.value)}
+              placeholder="e.g. 2.0"
+              className="bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs text-white w-20 focus:border-lime-500 focus:outline-none"
+            />
+          </div>
+          <div className="flex items-center gap-1.5">
+            <label className="text-xs text-gray-400">Spend &ge;</label>
+            <input
+              type="number"
+              step="10"
+              value={filterMinSpend}
+              onChange={e => setFilterMinSpend(e.target.value)}
+              placeholder="e.g. 50"
+              className="bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs text-white w-20 focus:border-lime-500 focus:outline-none"
+            />
+          </div>
+          <div className="flex items-center gap-1.5">
+            <label className="text-xs text-gray-400">Donations &ge;</label>
+            <input
+              type="number"
+              step="1"
+              value={filterMinDonations}
+              onChange={e => setFilterMinDonations(e.target.value)}
+              placeholder="e.g. 5"
+              className="bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs text-white w-20 focus:border-lime-500 focus:outline-none"
+            />
+          </div>
+          {hasActiveFilters && (
+            <div className="text-xs text-lime-400 ml-auto">
+              {filteredAds.length} of {activeAds.length} ads
+            </div>
+          )}
+        </div>
+      )}
 
       {/* CLIENTS TAB */}
       {activeTab === 'clients' && (
@@ -202,7 +315,7 @@ export default function AdPerformance({ refreshKey }: { refreshKey: number }) {
                     <th className="text-right py-2 px-2">Spend</th>
                     <th className="text-right py-2 px-2">AB Rev</th>
                     <th className="text-right py-2 px-2">ROI</th>
-                    <th className="text-right py-2 px-2">Conv</th>
+                    <th className="text-right py-2 px-2">Donations</th>
                     <th className="text-right py-2 px-2">CPP</th>
                     <th className="text-right py-2 px-2">Freq</th>
                     <th className="text-left py-2 px-2">Rec</th>
@@ -232,9 +345,9 @@ export default function AdPerformance({ refreshKey }: { refreshKey: number }) {
                       <td className={`py-1.5 px-2 text-right font-mono ${ad.roi >= 1.0 ? 'text-green-400' : ad.roi > 0 ? 'text-red-400' : 'text-gray-600'}`}>
                         {ad.roi > 0 ? `${ad.roi.toFixed(2)}x` : '-'}
                       </td>
-                      <td className="py-1.5 px-2 text-right text-gray-300">{ad.total_results}</td>
-                      <td className={`py-1.5 px-2 text-right font-mono ${ad.cpp > 40 ? 'text-red-400' : 'text-gray-300'}`}>
-                        {ad.cpp > 0 ? fmt(ad.cpp) : '-'}
+                      <td className="py-1.5 px-2 text-right text-gray-300">{ad.actblue_donations}</td>
+                      <td className={`py-1.5 px-2 text-right font-mono ${ad.actblue_donations > 0 && ad.total_spend / ad.actblue_donations > 40 ? 'text-red-400' : 'text-gray-300'}`}>
+                        {ad.actblue_donations > 0 ? fmt(ad.total_spend / ad.actblue_donations) : '-'}
                       </td>
                       <td className={`py-1.5 px-2 text-right ${ad.frequency > 2.0 ? 'text-red-400' : 'text-gray-400'}`}>
                         {ad.frequency.toFixed(2)}
@@ -478,9 +591,9 @@ function ClientAdsTable({ ads, client, fmt, hidePaused, searchQuery }: {
               <th className="text-right py-1 px-1">Spend{period !== 'all' ? ` (${period})` : ''}</th>
               <th className="text-right py-1 px-1">AB Rev{period !== 'all' ? ` (${period})` : ''}</th>
               <th className="text-right py-1 px-1">ROI{period !== 'all' ? ` (${period})` : ''}</th>
-              <th className="text-right py-1 px-1">Conv{period !== 'all' ? ` (${period})` : ''}</th>
+              <th className="text-right py-1 px-1">Donations{period !== 'all' ? ` (${period})` : ''}</th>
               <th className="text-right py-1 px-1">Clicks{period !== 'all' ? ` (${period})` : ''}</th>
-              <th className="text-right py-1 px-1">Conv%</th>
+              <th className="text-right py-1 px-1">Don%</th>
               <th className="text-right py-1 px-1">CPP</th>
               <th className="text-right py-1 px-1">Freq</th>
               <th className="text-center py-1 px-1">24h</th>
@@ -513,7 +626,7 @@ function getAdSpend(ad: AdPerf, period: Period, customData: AdPerf[] | null): nu
   return ad.total_spend;
 }
 
-function getAdVal(ad: AdPerf, period: Period, customData: AdPerf[] | null, field: 'spend' | 'results' | 'link_clicks' | 'actblue_revenue' | 'roi'): number {
+function getAdVal(ad: AdPerf, period: Period, customData: AdPerf[] | null, field: 'spend' | 'results' | 'link_clicks' | 'actblue_revenue' | 'actblue_donations' | 'roi'): number {
   if (period === 'custom' && customData) {
     const cAd = customData.find(a => a.ad_name === ad.ad_name);
     if (!cAd) return 0;
@@ -525,6 +638,7 @@ function getAdVal(ad: AdPerf, period: Period, customData: AdPerf[] | null, field
     if (field === 'results') return ad.total_results;
     if (field === 'link_clicks') return ad.link_clicks;
     if (field === 'actblue_revenue') return ad.actblue_revenue;
+    if (field === 'actblue_donations') return ad.actblue_donations;
     if (field === 'roi') return ad.roi;
   }
   return (ad as any)[`${field}${suffix}`] ?? 0;
@@ -539,12 +653,12 @@ function AdRow({ ad, fmt, period, customData, expanded, onToggle }: {
   onToggle: () => void;
 }) {
   const spend = getAdVal(ad, period, customData, 'spend');
-  const results = getAdVal(ad, period, customData, 'results');
+  const donations = getAdVal(ad, period, customData, 'actblue_donations');
   const clicks = getAdVal(ad, period, customData, 'link_clicks');
   const revenue = getAdVal(ad, period, customData, 'actblue_revenue');
   const roi = getAdVal(ad, period, customData, 'roi');
-  const convRate = clicks > 0 ? (results / clicks) * 100 : 0;
-  const cpp = results > 0 ? spend / results : 0;
+  const convRate = clicks > 0 ? (donations / clicks) * 100 : 0;
+  const cpp = donations > 0 ? spend / donations : 0;
 
   const isKillOrDrop = ad.recommendation === 'KILL' || ad.recommendation === 'DROP';
 
@@ -562,7 +676,7 @@ function AdRow({ ad, fmt, period, customData, expanded, onToggle }: {
         <td className={`py-1 px-1 text-right font-mono font-medium ${roi >= 1.3 ? 'text-green-400' : roi > 0 && roi < 1.0 ? 'text-red-400' : roi >= 1.0 ? 'text-yellow-400' : 'text-gray-600'}`}>
           {roi > 0 ? `${roi.toFixed(2)}x` : '-'}
         </td>
-        <td className="py-1 px-1 text-right text-gray-300">{results}</td>
+        <td className="py-1 px-1 text-right text-gray-300">{donations}</td>
         <td className="py-1 px-1 text-right text-gray-400">{clicks}</td>
         <td className={`py-1 px-1 text-right font-mono ${convRate > 5 ? 'text-green-400' : convRate > 2 ? 'text-yellow-400' : convRate > 0 ? 'text-gray-300' : 'text-gray-600'}`}>
           {convRate > 0 ? `${convRate.toFixed(1)}%` : '-'}

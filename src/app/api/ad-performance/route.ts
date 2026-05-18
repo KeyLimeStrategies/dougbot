@@ -105,33 +105,45 @@ export async function GET(request: NextRequest) {
     const customRevCol = hasCustom
       ? `, SUM(CASE WHEN r.date >= ? AND r.date <= ? THEN r.amount ELSE 0 END) as revenue_custom`
       : '';
+    const customDonCol = hasCustom
+      ? `, SUM(CASE WHEN r.date >= ? AND r.date <= ? THEN 1 ELSE 0 END) as donations_custom`
+      : '';
 
     const revParams: (string | number)[] = [
-      oneDayAgoET,       // revenue_1d
-      threeDaysAgoET,    // revenue_3d
-      sevenDaysAgoET,    // revenue_7d
-      fourteenDaysAgoET, // revenue_14d
+      // revenue windows: 1d, 3d, 7d, 14d
+      oneDayAgoET, threeDaysAgoET, sevenDaysAgoET, fourteenDaysAgoET,
     ];
     if (hasCustom) {
-      revParams.push(customStart!, customEnd!);
+      revParams.push(customStart!, customEnd!); // revenue_custom
     }
     revParams.push(
       oneDayAgoET,                // revenue_24h
       twoDaysAgoET, oneDayAgoET,  // revenue_prev_24h
     );
+    // donation count windows (same dates, separate params)
+    revParams.push(oneDayAgoET, threeDaysAgoET, sevenDaysAgoET, fourteenDaysAgoET);
+    if (hasCustom) {
+      revParams.push(customStart!, customEnd!); // donations_custom
+    }
     revParams.push(...filterParams);
 
     const revenueRows = db.prepare(`
       SELECT
         r.refcode,
         SUM(r.amount) as total_revenue,
+        COUNT(*) as total_donations,
         SUM(CASE WHEN r.date >= ? THEN r.amount ELSE 0 END) as revenue_1d,
         SUM(CASE WHEN r.date >= ? THEN r.amount ELSE 0 END) as revenue_3d,
         SUM(CASE WHEN r.date >= ? THEN r.amount ELSE 0 END) as revenue_7d,
         SUM(CASE WHEN r.date >= ? THEN r.amount ELSE 0 END) as revenue_14d
         ${customRevCol},
         SUM(CASE WHEN r.date >= ? THEN r.amount ELSE 0 END) as revenue_24h,
-        SUM(CASE WHEN r.date >= ? AND r.date < ? THEN r.amount ELSE 0 END) as revenue_prev_24h
+        SUM(CASE WHEN r.date >= ? AND r.date < ? THEN r.amount ELSE 0 END) as revenue_prev_24h,
+        SUM(CASE WHEN r.date >= ? THEN 1 ELSE 0 END) as donations_1d,
+        SUM(CASE WHEN r.date >= ? THEN 1 ELSE 0 END) as donations_3d,
+        SUM(CASE WHEN r.date >= ? THEN 1 ELSE 0 END) as donations_7d,
+        SUM(CASE WHEN r.date >= ? THEN 1 ELSE 0 END) as donations_14d
+        ${customDonCol}
       FROM revenue r
       JOIN clients c ON c.id = r.client_id
       WHERE r.refcode IS NOT NULL AND r.refcode != '' AND c.active = 1 AND c.is_ad_client = 1
@@ -165,6 +177,14 @@ export async function GET(request: NextRequest) {
       const actblueRevenue7d = rev?.revenue_7d ?? 0;
       const actblueRevenue14d = rev?.revenue_14d ?? 0;
       const actblueRevenueCustom = rev?.revenue_custom ?? 0;
+
+      // ActBlue donation counts (actual conversions from ActBlue, not Meta)
+      const actblueDonations = rev?.total_donations ?? 0;
+      const actblueDonations1d = rev?.donations_1d ?? 0;
+      const actblueDonations3d = rev?.donations_3d ?? 0;
+      const actblueDonations7d = rev?.donations_7d ?? 0;
+      const actblueDonations14d = rev?.donations_14d ?? 0;
+      const actblueDonationsCustom = rev?.donations_custom ?? 0;
 
       // ROI per window
       const roiCalc = (spend: number, revenue: number) => {
@@ -277,6 +297,12 @@ export async function GET(request: NextRequest) {
         link_clicks_7d: ad.link_clicks_7d ?? 0,
         link_clicks_14d: ad.link_clicks_14d ?? 0,
         ...(hasCustom ? { link_clicks_custom: ad.link_clicks_custom ?? 0 } : {}),
+        actblue_donations: actblueDonations,
+        actblue_donations_1d: actblueDonations1d,
+        actblue_donations_3d: actblueDonations3d,
+        actblue_donations_7d: actblueDonations7d,
+        actblue_donations_14d: actblueDonations14d,
+        ...(hasCustom ? { actblue_donations_custom: actblueDonationsCustom } : {}),
         cpp: cpp === Infinity ? 0 : cpp,
         cpp_3d: cpp3d === Infinity ? 0 : cpp3d,
         frequency: ad.frequency ?? 0,
@@ -343,8 +369,8 @@ export async function GET(request: NextRequest) {
       c.ads.push(ad.ad_name);
       c.total_spend += ad.total_spend;
       c.spend_72h += ad.spend_3d;
-      c.total_results += ad.total_results;
-      c.results_72h += ad.results_3d;
+      c.total_results += ad.actblue_donations;
+      c.results_72h += ad.actblue_donations_3d;
       c.total_revenue += ad.actblue_revenue;
       c.revenue_72h += ad.actblue_revenue_3d;
     }
